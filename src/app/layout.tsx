@@ -14,6 +14,9 @@ export const metadata: Metadata = {
   description: "Collector-focused bottle price index and market archive for spirits.",
   applicationName: "Caskfolio",
   manifest: "/manifest.webmanifest",
+  verification: {
+    google: "XXXX",
+  },
   appleWebApp: {
     title: "Caskfolio",
     capable: true,
