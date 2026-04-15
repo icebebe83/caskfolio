@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   applicationName: "Caskfolio",
   manifest: "/manifest.webmanifest",
   verification: {
-    google: "XXXX",
+    google: "M_gnXlXq0X9ZNReUtrhBQFVoeNhGby2UlP431IxlqfQ",
   },
   appleWebApp: {
     title: "Caskfolio",
