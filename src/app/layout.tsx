@@ -26,10 +26,10 @@ export const metadata: Metadata = {
     type: "website",
     images: [
       {
-        url: "/caskfolio-share.svg",
+        url: "/og-image.jpg",
         width: 1200,
         height: 630,
-        alt: "Caskfolio collector bottle price index",
+        alt: "Caskfolio - Track real bottle market prices",
       },
     ],
   },
@@ -37,7 +37,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Caskfolio",
     description: "Collector-focused bottle price index and market archive for spirits.",
-    images: ["/caskfolio-share.svg"],
+    images: ["/og-image.jpg"],
   },
   icons: {
     icon: "/favicon.svg",
