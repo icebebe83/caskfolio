@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <rect width="1200" height="630" fill="#F6F1E8"/>
+  <rect x="36" y="36" width="1128" height="558" rx="34" fill="#FFFCF7" stroke="#E8DED0" stroke-width="2"/>
+  <rect x="76" y="76" width="1048" height="478" rx="28" fill="#FFFDF9"/>
+  <path d="M813 140h88v46h-88z" fill="#F6EFE2"/>
+  <path d="M762 198h190v60H762z" fill="#F6EFE2"/>
+  <path d="M790 276h134c33.137 0 60 26.863 60 60v28c0 79.529-64.471 144-144 144s-144-64.471-144-144v-28c0-33.137 26.863-60 60-60Z" fill="#C4873A"/>
+  <rect x="637" y="311" width="406" height="146" rx="73" fill="#F6EFE2"/>
+  <path d="M922 348c-20.521-17.196-48.427-26.451-78.916-26.451-63.837 0-108.984 43.108-108.984 94.451 0 51.344 45.147 94.451 108.984 94.451 30.489 0 58.395-9.255 78.916-26.451v-42.696c-15.929 15.39-40.642 25.407-68.722 25.407-37.301 0-63.278-21.43-63.278-50.71 0-29.281 25.977-50.711 63.278-50.711 28.08 0 52.793 10.018 68.722 25.408V348Z" fill="#111111"/>
+  <text x="92" y="210" fill="#111111" font-family="Georgia, 'Times New Roman', serif" font-size="88" font-weight="700" letter-spacing="-2">Caskfolio</text>
+  <text x="96" y="274" fill="#8A7E70" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="6">COLLECTOR BOTTLE INDEX</text>
+  <text x="96" y="352" fill="#3D382F" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700">Track bottle market prices with a collector-first archive.</text>
+  <text x="96" y="408" fill="#6E665C" font-family="Arial, Helvetica, sans-serif" font-size="28">Market snapshots, reference pricing, and curated bottle data in one place.</text>
+  <text x="96" y="503" fill="#A18F7A" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" letter-spacing="4">PRICE INDEX · MARKET ARCHIVE · REFERENCE PLATFORM</text>
+</svg>

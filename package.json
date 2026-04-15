@@ -1,0 +1,37 @@
+{
+  "name": "caskfolio",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "preview": "npm run build && npx serve@14.2.4 out -l 3007",
+    "preview:restart": "bash scripts/dev/run_preview.sh",
+    "preview:stable": "npm run build && bash scripts/dev/run_preview.sh",
+    "supabase:validate": "node scripts/db/validate-supabase.mjs",
+    "import:whisky-catalog": "bash scripts/db/import-whisky-catalog.sh",
+    "news:import": "node scripts/news/import-news.mjs",
+    "reference:sync": "node scripts/reference/sync-reference-prices.mjs",
+    "lint": "next lint",
+    "export": "npm run build",
+    "deploy": "npm run build"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.101.1",
+    "clsx": "^2.1.1",
+    "next": "^15.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.15.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.2"
+  }
+}

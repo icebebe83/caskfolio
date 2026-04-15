@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --font-body: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --background: #ffffff;
+  --surface: #ffffff;
+  --surface-soft: #f7f7f5;
+  --line: #e8e8e3;
+  --text: #171717;
+  --muted: #6f6f68;
+  --accent: #1e1e1e;
+  --warm: #8d5b33;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  @apply antialiased;
+  background: var(--background);
+  color: var(--text);
+  font-family: var(--font-body);
+}
+
+a {
+  @apply transition-colors;
+}
+
+input,
+select,
+textarea {
+  @apply outline-none;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 1);
+  @apply rounded-[28px];
+}
+
+.subtle-grid {
+  background-image: theme("backgroundImage.grain");
+  background-size: 14px 14px;
+}
+
+.field {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 1);
+  color: var(--text);
+  @apply rounded-2xl px-4 py-3 text-sm transition;
+}
+
+.field:focus {
+  border-color: #b8b8af;
+  box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.06);
+}
+
+.button-primary {
+  background: var(--accent);
+  color: white;
+  @apply inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition;
+}
+
+.button-primary:hover {
+  background: #000000;
+}
+
+.button-secondary {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 1);
+  color: var(--text);
+  @apply inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition;
+}
+
+.button-secondary:hover {
+  background: #f6f6f2;
+}
+
+.eyebrow {
+  color: var(--muted);
+  @apply text-[11px] font-semibold uppercase tracking-[0.22em];
+}

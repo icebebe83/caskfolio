@@ -1,0 +1,17 @@
+{
+  "processed": 1,
+  "matched": 1,
+  "failed": 0,
+  "updatedAt": "2026-04-15T03:28:48.609Z",
+  "details": [
+    {
+      "bottleId": "dd82d075-40d6-4add-b2f3-aaa968c90ac3",
+      "bottleName": "Macallan 15 Double Cask",
+      "source": "SpiritRadar",
+      "referencePriceUsd": 2902.67,
+      "confidenceScore": null,
+      "matchedName": null,
+      "matchedVolumeMl": null
+    }
+  ]
+}
