@@ -20,6 +20,7 @@ import { assertSupabaseConfigured, supabase } from "@/lib/supabase/client";
 import type { AppUser, Listing, ListingFormInput } from "@/lib/types";
 import {
   fetchListingsQuery,
+  mapListingContactRow,
   mapListingRow,
   sortByCreatedAtDesc,
   toDbStatus,
@@ -66,14 +67,31 @@ export async function fetchListingsForBottleIds(bottleIds: string[]): Promise<Li
   try {
     clearLocalListings();
     const { data, error } = await supabase!
-      .from("listings")
-      .select("*, bottle:bottles(name,category)")
+      .from("public_listings")
+      .select("*")
       .in("bottle_id", bottleIds)
       .order("created_at", { ascending: false });
     if (error) throw error;
     return (data ?? []).map(mapListingRow);
   } catch {
     return [];
+  }
+}
+
+export async function fetchListingContact(
+  listingId: string,
+): Promise<Pick<Listing, "messengerType" | "messengerHandle" | "telegramId"> | null> {
+  assertSupabaseConfigured();
+  try {
+    const { data, error } = await supabase!
+      .from("listing_contacts")
+      .select("messenger_type,messenger_handle,telegram_id")
+      .eq("listing_id", listingId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return mapListingContactRow(data);
+  } catch {
+    return null;
   }
 }
 
@@ -118,10 +136,6 @@ export async function submitListing(
     quantity: input.quantity,
     condition: input.condition,
     region: input.region.trim(),
-    messenger_type: input.messengerType,
-    messenger_handle: normalizedMessengerHandle,
-    telegram_id:
-      input.messengerType === "telegram" ? normalizeTelegramId(input.messengerHandle) : "",
     note: input.note.trim(),
     original_images: [] as string[],
     thumbnail_images: [] as string[],
@@ -141,7 +155,6 @@ export async function submitListing(
             .eq("price", input.inputPriceValue)
             .eq("currency", input.inputCurrency)
             .eq("normalized_price_usd", normalizedPriceUsd)
-            .eq("messenger_handle", normalizedMessengerHandle)
             .eq("note", input.note.trim())
             .order("created_at", { ascending: false })
             .limit(1)
@@ -174,6 +187,28 @@ export async function submitListing(
     if (error || !data) throw error;
 
     let nextListing = mapListingRow(data);
+
+    const contactPayload = {
+      listing_id: nextListing.id,
+      user_id: user.uid,
+      messenger_type: input.messengerType,
+      messenger_handle: normalizedMessengerHandle,
+      telegram_id:
+        input.messengerType === "telegram" ? normalizeTelegramId(input.messengerHandle) : "",
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: contactError } = await supabase!.from("listing_contacts").upsert(contactPayload, {
+      onConflict: "listing_id",
+    });
+    if (contactError) throw contactError;
+
+    nextListing = {
+      ...nextListing,
+      messengerType: contactPayload.messenger_type as Listing["messengerType"],
+      messengerHandle: contactPayload.messenger_handle,
+      telegramId: contactPayload.telegram_id,
+    };
 
     if (imageFiles.length) {
       try {
@@ -351,9 +386,6 @@ export async function updateListing(
       quantity: nextListing.quantity,
       condition: nextListing.condition,
       region: nextListing.region,
-      messenger_type: nextListing.messengerType ?? "telegram",
-      messenger_handle: nextListing.messengerHandle ?? "",
-      telegram_id: nextListing.telegramId ?? "",
       note: nextListing.note,
       original_images: nextListing.originalImages ?? [],
       thumbnail_images: nextListing.thumbnailImages ?? [],
@@ -363,6 +395,21 @@ export async function updateListing(
     })
     .eq("id", listing.id);
   if (error) throw toSupabaseError(error, "Unable to update listing.");
+
+  const { error: contactError } = await supabase!
+    .from("listing_contacts")
+    .upsert(
+      {
+        listing_id: listing.id,
+        user_id: listing.createdBy,
+        messenger_type: nextListing.messengerType ?? "telegram",
+        messenger_handle: nextListing.messengerHandle ?? "",
+        telegram_id: nextListing.telegramId ?? "",
+        updated_at: now,
+      },
+      { onConflict: "listing_id" },
+    );
+  if (contactError) throw toSupabaseError(contactError, "Unable to update listing contact.");
   clearLocalListings();
   return nextListing;
 }

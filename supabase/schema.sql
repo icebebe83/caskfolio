@@ -60,6 +60,15 @@ create table public.listings (
   updated_at timestamptz not null default now()
 );
 
+create table public.listing_contacts (
+  listing_id uuid primary key references public.listings(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  messenger_type text,
+  messenger_handle text,
+  telegram_id text not null default '',
+  updated_at timestamptz not null default now()
+);
+
 create table public.news (
   id text primary key,
   title text not null,
@@ -133,6 +142,30 @@ create table public.audit_logs (
   created_at timestamptz not null default now()
 );
 
+create view public.public_listings as
+select
+  id,
+  bottle_id,
+  user_id,
+  bottle_name,
+  category,
+  price,
+  currency,
+  fx_rate_at_entry,
+  normalized_price_usd,
+  approx_price_krw,
+  quantity,
+  condition,
+  region,
+  note,
+  status,
+  original_images,
+  thumbnail_images,
+  image_url,
+  created_at,
+  updated_at
+from public.listings;
+
 create or replace function public.is_admin()
 returns boolean
 language sql
@@ -154,6 +187,7 @@ create index idx_listings_bottle_id on public.listings(bottle_id);
 create index idx_listings_user_id on public.listings(user_id);
 create index idx_listings_status on public.listings(status);
 create index idx_listings_created_at on public.listings(created_at desc);
+create index idx_listing_contacts_user_id on public.listing_contacts(user_id);
 create index idx_news_published_at on public.news(published_at desc);
 create index idx_reports_status on public.reports(status);
 create index idx_fx_rates_pair_updated on public.fx_rates(pair, updated_at desc);
@@ -168,6 +202,7 @@ alter table public.profiles enable row level security;
 alter table public.admins enable row level security;
 alter table public.bottles enable row level security;
 alter table public.listings enable row level security;
+alter table public.listing_contacts enable row level security;
 alter table public.news enable row level security;
 alter table public.reports enable row level security;
 alter table public.fx_rates enable row level security;
@@ -199,8 +234,8 @@ for update to authenticated using (public.is_admin()) with check (public.is_admi
 create policy "bottles_delete_admin" on public.bottles
 for delete to authenticated using (public.is_admin());
 
-create policy "listings_read_all" on public.listings
-for select using (true);
+create policy "listings_select_owner_or_admin" on public.listings
+for select to authenticated using (user_id = auth.uid() or public.is_admin());
 
 create policy "listings_insert_own" on public.listings
 for insert to authenticated with check (user_id = auth.uid());
@@ -211,6 +246,20 @@ using (user_id = auth.uid() or public.is_admin())
 with check (user_id = auth.uid() or public.is_admin());
 
 create policy "listings_delete_owner_or_admin" on public.listings
+for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+create policy "listing_contacts_select_authenticated" on public.listing_contacts
+for select to authenticated using (true);
+
+create policy "listing_contacts_insert_own" on public.listing_contacts
+for insert to authenticated with check (user_id = auth.uid());
+
+create policy "listing_contacts_update_owner_or_admin" on public.listing_contacts
+for update to authenticated
+using (user_id = auth.uid() or public.is_admin())
+with check (user_id = auth.uid() or public.is_admin());
+
+create policy "listing_contacts_delete_owner_or_admin" on public.listing_contacts
 for delete to authenticated using (user_id = auth.uid() or public.is_admin());
 
 create policy "news_read_all" on public.news
@@ -257,3 +306,5 @@ for select to authenticated using (public.is_admin());
 
 create policy "audit_logs_insert_admin" on public.audit_logs
 for insert to authenticated with check (public.is_admin());
+
+grant select on public.public_listings to anon, authenticated;

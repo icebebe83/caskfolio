@@ -21,6 +21,7 @@ import { assertSupabaseConfigured, supabase } from "@/lib/supabase/client";
 
 export type BottleRow = Record<string, unknown>;
 export type ListingRow = Record<string, unknown> & { bottle?: Record<string, unknown> | null };
+export type ListingContactRow = Record<string, unknown>;
 export type ReportRow = Record<string, unknown>;
 export type BottleReferencePriceRow = Record<string, unknown>;
 export type NewsRow = Record<string, unknown>;
@@ -205,6 +206,26 @@ export function mapListingRow(row: ListingRow): Listing {
   };
 }
 
+export function mapListingContactRow(row: ListingContactRow): Pick<
+  Listing,
+  "messengerType" | "messengerHandle" | "telegramId"
+> {
+  const messengerType =
+    typeof row.messenger_type === "string" ? row.messenger_type : undefined;
+  const messengerHandle =
+    typeof row.messenger_handle === "string"
+      ? row.messenger_handle
+      : typeof row.telegram_id === "string"
+        ? row.telegram_id
+        : "";
+
+  return {
+    messengerType: messengerType as Listing["messengerType"],
+    messengerHandle,
+    telegramId: messengerType === "telegram" ? normalizeTelegramId(messengerHandle) : "",
+  };
+}
+
 export function mapReportRow(row: ReportRow): Report {
   return {
     id: String(row.id ?? ""),
@@ -339,8 +360,8 @@ export function toDbStatus(status: Listing["status"]): "active" | "inactive" {
 export async function fetchListingsQuery(limitSize?: number, bottleId?: string): Promise<Listing[]> {
   assertSupabaseConfigured();
   let query = supabase!
-    .from("listings")
-    .select("*, bottle:bottles(name,category)")
+    .from("public_listings")
+    .select("*")
     .order("created_at", { ascending: false });
 
   if (limitSize) query = query.limit(limitSize);

@@ -6,7 +6,7 @@ import { EditListingButton } from "@/components/edit-listing-button";
 import { useAuth, useLanguage } from "@/components/providers";
 import { ReportListingButton } from "@/components/report-listing-button";
 import { getListingImageForSurface, isDefaultRegisterBottleImage } from "@/lib/media/images";
-import { updateListingStatus } from "@/lib/data/store";
+import { fetchListingContact, updateListingStatus } from "@/lib/data/store";
 import {
   buildMessengerLink,
   formatDate,
@@ -39,11 +39,10 @@ export function ListingCard({
   const [currentListing, setCurrentListing] = useState(listing);
   const [isDeleted, setIsDeleted] = useState(false);
   const [contactMessage, setContactMessage] = useState("");
+  const [isContactLoading, setIsContactLoading] = useState(false);
   const messengerType = currentListing.messengerType ?? (currentListing.telegramId ? "telegram" : undefined);
   const messengerHandle = currentListing.messengerHandle ?? currentListing.telegramId ?? "";
-  const messengerLink = messengerType ? buildMessengerLink(messengerType, messengerHandle) : "";
   const hasMessenger = Boolean(messengerType && messengerHandle.trim());
-  const isKakaoTalkDirectContact = messengerType === "kakaotalk" && hasMessenger;
   const isOwner = user?.uid === currentListing.createdBy;
   const listingImageUrl = getListingImageForSurface(
     currentListing,
@@ -58,7 +57,69 @@ export function ListingCard({
     setCurrentListing(listing);
     setIsDeleted(false);
     setContactMessage("");
+    setIsContactLoading(false);
   }, [listing]);
+
+  const onContact = async () => {
+    if (!user || currentListing.status !== "active") return;
+
+    let nextListing = currentListing;
+
+    if (!hasMessenger) {
+      setIsContactLoading(true);
+      const contact = await fetchListingContact(currentListing.id);
+      setIsContactLoading(false);
+
+      if (!contact?.messengerType || !contact.messengerHandle?.trim()) {
+        setContactMessage(tListingUi(language, "Contact unavailable."));
+        return;
+      }
+
+      nextListing = {
+        ...currentListing,
+        messengerType: contact.messengerType,
+        messengerHandle: contact.messengerHandle,
+        telegramId: contact.telegramId,
+      };
+      setCurrentListing(nextListing);
+    }
+
+    const nextMessengerType = nextListing.messengerType;
+    const nextMessengerHandle = nextListing.messengerHandle ?? nextListing.telegramId ?? "";
+
+    if (nextMessengerType === "kakaotalk") {
+      const copyHandle = nextMessengerHandle.trim();
+      if (!copyHandle) {
+        setContactMessage(tListingUi(language, "Contact unavailable."));
+        return;
+      }
+      void navigator.clipboard
+        .writeText(copyHandle)
+        .then(() => {
+          setContactMessage(
+            tListingUi(language, "KakaoTalk ID copied. Add the user in KakaoTalk."),
+          );
+        })
+        .catch(() => {
+          setContactMessage(
+            tListingUi(language, "Copy failed. Use the saved KakaoTalk ID manually."),
+          );
+        });
+      return;
+    }
+
+    const nextMessengerLink =
+      nextMessengerType && nextMessengerHandle
+        ? buildMessengerLink(nextMessengerType, nextMessengerHandle)
+        : "";
+
+    if (nextMessengerLink) {
+      window.open(nextMessengerLink, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    setContactMessage(tListingUi(language, "Contact unavailable."));
+  };
 
   if (isDeleted) {
     return null;
@@ -161,45 +222,23 @@ export function ListingCard({
         ) : null}
 
         <div className={`flex items-center justify-between gap-3 ${compact ? "pt-0.5" : "pt-1"}`}>
-          {user && currentListing.status === "active" && hasMessenger ? (
-            isKakaoTalkDirectContact ? (
-              <button
-                type="button"
-                onClick={() => {
-                  const copyHandle = messengerHandle.trim();
-                  if (!copyHandle) return;
-                  void navigator.clipboard.writeText(copyHandle).then(() => {
-                    setContactMessage(
-                      tListingUi(language, "KakaoTalk ID copied. Add the user in KakaoTalk."),
-                    );
-                  }).catch(() => {
-                    setContactMessage(
-                      tListingUi(language, "Copy failed. Use the saved KakaoTalk ID manually."),
-                    );
-                  });
-                }}
-                className={`inline-flex rounded-full bg-[#111111] font-semibold text-white transition hover:bg-black ${
-                  compact ? "px-3 py-1.5 text-[13px]" : "px-4 py-2 text-sm"
-                }`}
-              >
-                {tListingUi(language, "Contact")}
-              </button>
-            ) : messengerLink ? (
-              <a
-                href={messengerLink}
-                target="_blank"
-                rel="noreferrer"
-                className={`inline-flex rounded-full bg-[#111111] font-semibold text-white transition hover:bg-black ${
-                  compact ? "px-3 py-1.5 text-[13px]" : "px-4 py-2 text-sm"
-                }`}
-              >
-                {tListingUi(language, "Contact")}
-              </a>
-            ) : (
-              <span className={`${compact ? "text-[13px]" : "text-sm"} text-neutral-400`}>
-                {tListingUi(language, "Contact unavailable.")}
-              </span>
-            )
+          {user && currentListing.status === "active" ? (
+            <button
+              type="button"
+              onClick={() => {
+                void onContact();
+              }}
+              disabled={isContactLoading}
+              className={`inline-flex rounded-full bg-[#111111] font-semibold text-white transition hover:bg-black disabled:opacity-60 ${
+                compact ? "px-3 py-1.5 text-[13px]" : "px-4 py-2 text-sm"
+              }`}
+            >
+              {isContactLoading
+                ? language === "kr"
+                  ? "불러오는 중..."
+                  : "Loading..."
+                : tListingUi(language, "Contact")}
+            </button>
           ) : (
             <span className={`${compact ? "text-[13px]" : "text-sm"} text-neutral-400`}>
               {!user

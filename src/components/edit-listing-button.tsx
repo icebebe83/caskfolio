@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { useLanguage } from "@/components/providers";
 import { LISTING_CONDITIONS, MESSENGER_OPTIONS } from "@/lib/constants";
 import { formatKrw, formatUsd, priceToKrw, priceToUsd } from "@/lib/format";
-import { updateListing } from "@/lib/data/store";
+import { fetchListingContact, updateListing } from "@/lib/data/store";
 import { resolveUsdKrwRate } from "@/lib/fx";
 import { tCondition, tListingAction, tListingUi, tMessenger, tStatus } from "@/lib/i18n";
 import type { Listing } from "@/lib/types";
@@ -72,6 +72,23 @@ export function EditListingButton({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || listing.id.startsWith("local-")) return;
+    if (listing.messengerType || listing.messengerHandle || listing.telegramId) return;
+
+    void fetchListingContact(listing.id).then((contact) => {
+      if (!contact) return;
+      setMessengerType(contact.messengerType ?? "telegram");
+      setMessengerHandle(contact.messengerHandle ?? contact.telegramId ?? "");
+    });
+  }, [
+    isOpen,
+    listing.id,
+    listing.messengerHandle,
+    listing.messengerType,
+    listing.telegramId,
+  ]);
 
   const numericPrice = Number(priceValue || 0);
   const numericQuantity = Math.max(1, Number(quantity || 1));
