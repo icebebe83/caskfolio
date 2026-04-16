@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import "@/app/globals.css";
 import { AgeVerificationModal } from "@/components/age-verification-modal";
+import { GoogleAnalytics } from "@/components/google-analytics";
 import { Providers } from "@/components/providers";
 import { SiteHeader } from "@/components/site-header";
 
@@ -56,6 +57,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
+        <GoogleAnalytics />
         <Providers>
           <div className="min-h-screen">
             <AgeVerificationModal />
