@@ -15,6 +15,7 @@ import {
   formatListingStatus,
   formatUsd,
   getStatusDotClass,
+  normalizeTelegramId,
 } from "@/lib/format";
 import { tListingAction, tListingUi, tStatus } from "@/lib/i18n";
 import type { Bottle, Listing } from "@/lib/types";
@@ -53,12 +54,123 @@ export function ListingCard({
   const statusLabel = tStatus(language, formatListingStatus(currentListing.status));
   const statusTone = currentListing.status === "active" ? "text-[#111111]" : "text-neutral-400";
 
+  const isMobileDevice = () => {
+    if (typeof navigator === "undefined") return false;
+    return /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+  };
+
+  const isInAppBrowser = () => {
+    if (typeof navigator === "undefined") return false;
+    const ua = navigator.userAgent.toLowerCase();
+    return (
+      ua.includes("kakaotalk") ||
+      ua.includes("instagram") ||
+      ua.includes("fban") ||
+      ua.includes("fbav") ||
+      ua.includes("fb_iab") ||
+      ua.includes("fb4a") ||
+      ua.includes("; wv") ||
+      ua.includes("webview") ||
+      ua.includes("line/") ||
+      ua.includes("naver") ||
+      ua.includes("daumapps")
+    );
+  };
+
+  const openExternalUrl = (url: string) => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  };
+
+  const openTelegram = (handle: string) => {
+    if (typeof window === "undefined") return;
+
+    const normalized = normalizeTelegramId(handle);
+    if (!normalized) {
+      setContactMessage(tListingUi(language, "Contact unavailable."));
+      return;
+    }
+
+    const webUrl = `https://t.me/${encodeURIComponent(normalized)}`;
+
+    if (!isMobileDevice()) {
+      openExternalUrl(webUrl);
+      return;
+    }
+
+    const appUrl = `tg://resolve?domain=${encodeURIComponent(normalized)}`;
+    let fallbackTimer: number | null = window.setTimeout(() => {
+      openExternalUrl(webUrl);
+    }, isInAppBrowser() ? 400 : 900);
+
+    const clearFallback = () => {
+      if (fallbackTimer !== null) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+      window.removeEventListener("pagehide", clearFallback);
+      window.removeEventListener("blur", clearFallback);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearFallback();
+      }
+    };
+
+    window.addEventListener("pagehide", clearFallback, { once: true });
+    window.addEventListener("blur", clearFallback, { once: true });
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    window.location.href = appUrl;
+  };
+
   useEffect(() => {
     setCurrentListing(listing);
     setIsDeleted(false);
     setContactMessage("");
     setIsContactLoading(false);
   }, [listing]);
+
+  useEffect(() => {
+    if (!user || currentListing.status !== "active" || hasMessenger) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void fetchListingContact(currentListing.id)
+      .then((contact) => {
+        if (cancelled || !contact?.messengerType || !contact.messengerHandle?.trim()) {
+          return;
+        }
+
+        setCurrentListing((previous) =>
+          previous.id === currentListing.id
+            ? {
+                ...previous,
+                messengerType: contact.messengerType,
+                messengerHandle: contact.messengerHandle,
+                telegramId: contact.telegramId,
+              }
+            : previous,
+        );
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, currentListing.id, currentListing.status, hasMessenger]);
 
   const onContact = async () => {
     if (!user || currentListing.status !== "active") return;
@@ -108,13 +220,18 @@ export function ListingCard({
       return;
     }
 
+    if (nextMessengerType === "telegram" && nextMessengerHandle) {
+      openTelegram(nextMessengerHandle);
+      return;
+    }
+
     const nextMessengerLink =
       nextMessengerType && nextMessengerHandle
         ? buildMessengerLink(nextMessengerType, nextMessengerHandle)
         : "";
 
     if (nextMessengerLink) {
-      window.open(nextMessengerLink, "_blank", "noopener,noreferrer");
+      openExternalUrl(nextMessengerLink);
       return;
     }
 
