@@ -186,6 +186,31 @@ export async function updateNewsPriority(
   });
 }
 
+export async function updateNewsImageUrl(newsId: string, imageUrl: string): Promise<void> {
+  assertSupabaseConfigured();
+  const { data: existing, error: fetchError } = await supabase!
+    .from("news")
+    .select("url")
+    .eq("id", newsId)
+    .maybeSingle();
+  if (fetchError) throw toSupabaseError(fetchError, "Unable to load news item.");
+
+  const url = String(existing?.url ?? "");
+  const nextImageUrl = resolveNewsImageUrl(url, imageUrl);
+  const { error } = await supabase!
+    .from("news")
+    .update({ image_url: nextImageUrl })
+    .eq("id", newsId);
+  if (error) throw toSupabaseError(error, "Unable to update news image.");
+
+  await appendAuditLog({
+    action: "news.image_updated",
+    targetType: "news",
+    targetId: newsId,
+    details: { imageUrl: nextImageUrl },
+  });
+}
+
 export async function deleteNewsItem(newsId: string): Promise<void> {
   assertSupabaseConfigured();
   const { error } = await supabase!.from("news").delete().eq("id", newsId);

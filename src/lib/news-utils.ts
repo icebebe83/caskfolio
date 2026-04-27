@@ -21,9 +21,14 @@ export function getYouTubeThumbnailUrl(url: string): string {
 
 export function resolveNewsImageUrl(url: string, imageUrl?: string): string {
   const normalizedImage = imageUrl?.trim() ?? "";
+  const youtubeThumbnail = getYouTubeThumbnailUrl(url);
+
+  if (youtubeThumbnail && normalizedImage.startsWith("/news-thumbs/")) {
+    return youtubeThumbnail;
+  }
+
   if (normalizedImage) return normalizedImage;
 
-  const youtubeThumbnail = getYouTubeThumbnailUrl(url);
   if (youtubeThumbnail) return youtubeThumbnail;
 
   return "/news-fallback.png";

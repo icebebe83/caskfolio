@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { createNewsThumbnail, getNewsFallbackImage } from "./news-image-utils.mjs";
 import { loadProjectEnv } from "../shared/load-env.mjs";
@@ -26,8 +27,6 @@ const YOUTUBE_SOURCES = [
 ];
 
 const OUTPUT_PATH = path.join(process.cwd(), "public", "news.json");
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const FALLBACK_IMAGE = getNewsFallbackImage();
 const PRIORITY_RANK = { high: 3, medium: 2, low: 1 };
 const ALLOWED_SOURCES = new Set([...SOURCES, ...YOUTUBE_SOURCES].map((item) => item.source));
@@ -539,12 +538,15 @@ function makeDocId(url) {
   return Buffer.from(url).toString("base64url").slice(0, 120);
 }
 
-function getSupabaseAdmin() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+function getSupabaseAdmin(env = process.env) {
+  const supabaseUrl = env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const supabaseServiceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
     throw new Error("SUPABASE_URL/NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.");
   }
 
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
@@ -686,7 +688,11 @@ function sortCuratedArticles(articles) {
 }
 
 async function fetchPublishedArticles(supabase) {
-  const { data, error } = await supabase.from("news").select("*").limit(36);
+  const { data, error } = await supabase
+    .from("news")
+    .select("*")
+    .order("published_at", { ascending: false })
+    .limit(36);
   if (error || !data?.length) {
     return [];
   }
@@ -728,12 +734,17 @@ function limitVideoShare(articles) {
   });
 }
 
-async function main() {
+export async function runNewsImport(options = {}) {
+  const {
+    env = process.env,
+    writeOutputFile = true,
+    useLocalThumbnails = true,
+  } = options;
   const collected = limitVideoShare(
     [...new Map((await collectArticles()).map((item) => [item.url, item])).values()],
   );
 
-  const supabase = getSupabaseAdmin();
+  const supabase = getSupabaseAdmin(env);
   const { removed } = await pruneExistingArticles(supabase);
   const existingUrls = await fetchExistingUrls(supabase);
   const newArticles = collected.filter((item) => !existingUrls.has(item.url)).slice(0, 3);
@@ -742,7 +753,10 @@ async function main() {
   for (const article of curatedArticles) {
     const extracted = await extractArticleDetails(article);
     article.summary = extracted.summary || article.summary;
-    article.imageUrl = await createNewsThumbnail(extracted.imageUrl || FALLBACK_IMAGE);
+    const sourceImageUrl = extracted.imageUrl || article.imageUrl || FALLBACK_IMAGE;
+    article.imageUrl = useLocalThumbnails
+      ? await createNewsThumbnail(sourceImageUrl)
+      : sourceImageUrl;
     await saveArticle(supabase, article);
   }
 
@@ -753,15 +767,35 @@ async function main() {
     imageUrl: article.imageUrl || FALLBACK_IMAGE,
   }));
 
-  await fs.mkdir(path.dirname(OUTPUT_PATH), { recursive: true });
-  await fs.writeFile(OUTPUT_PATH, JSON.stringify(outputArticles, null, 2));
+  if (writeOutputFile) {
+    await fs.mkdir(path.dirname(OUTPUT_PATH), { recursive: true });
+    await fs.writeFile(OUTPUT_PATH, JSON.stringify(outputArticles, null, 2));
+  }
 
-  console.log(
-    `[news-import] saved ${newArticles.length} new article(s), pruned ${removed} row(s), and refreshed ${OUTPUT_PATH}`,
-  );
+  const summary = {
+    saved: newArticles.length,
+    pruned: removed,
+    count: outputArticles.length,
+    latestTitle: outputArticles[0]?.title ?? "",
+    wroteOutputFile: writeOutputFile,
+  };
+
+  if (writeOutputFile) {
+    console.log(
+      `[news-import] saved ${summary.saved} new article(s), pruned ${summary.pruned} row(s), and refreshed ${OUTPUT_PATH}`,
+    );
+  } else {
+    console.log(
+      `[news-import] saved ${summary.saved} new article(s), pruned ${summary.pruned} row(s), and refreshed Supabase news rows`,
+    );
+  }
+
+  return summary;
 }
 
-main().catch((error) => {
-  console.error("[news-import] failed:", error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runNewsImport().catch((error) => {
+    console.error("[news-import] failed:", error);
+    process.exitCode = 1;
+  });
+}

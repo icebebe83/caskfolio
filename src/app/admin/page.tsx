@@ -56,6 +56,7 @@ import {
   updateBottleHotFlag,
   updateBottleMasterImage,
   updateListingStatus,
+  updateNewsImageUrl,
   updateNewsPriority,
   updateReportStatus,
   updateUserAdminRole,
@@ -104,7 +105,9 @@ export default function AdminPage() {
   const [serverStatus, setServerStatus] = useState<AdminServerStatus>(EMPTY_SERVER_STATUS);
   const [isPending, startTransition] = useTransition();
   const [manualNews, setManualNews] = useState<AdminManualNewsDraft>(createEmptyManualNewsDraft);
+  const [newsImageDrafts, setNewsImageDrafts] = useState<Record<string, string>>({});
   const [adminServerActionsEnabled, setAdminServerActionsEnabled] = useState(false);
+  const newsImportActionsEnabled = true;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -129,6 +132,7 @@ export default function AdminPage() {
     setReports(reportDocs);
     setBottles(bottleDocs);
     setNewsItems(newsDocs);
+    setNewsImageDrafts(Object.fromEntries(newsDocs.map((item) => [item.id, item.imageUrl])));
     setUsers(userDocs);
     setHeroBanners(heroBannerData);
     setAuditLogs(auditLogData);
@@ -459,6 +463,13 @@ export default function AdminPage() {
     withAction(() => updateNewsPriority(newsId, priority), "News priority updated.");
   };
 
+  const onNewsImageUpdate = (newsId: string) => {
+    withAction(
+      () => updateNewsImageUrl(newsId, newsImageDrafts[newsId] ?? ""),
+      "News thumbnail updated.",
+    );
+  };
+
   const onNewsDelete = (newsId: string) => {
     withAction(() => deleteNewsItem(newsId), "News item removed.");
   };
@@ -493,7 +504,7 @@ export default function AdminPage() {
   };
 
   const onRunNewsImport = async () => {
-    if (!adminServerActionsEnabled) {
+    if (!newsImportActionsEnabled) {
       setError("This action is not available in production yet.");
       return;
     }
@@ -502,9 +513,8 @@ export default function AdminPage() {
       setMessage("");
       const data = await runNewsImportAction();
       setServerStatus(data);
-      setMessage(
-        data.newsImport.running ? "News import started." : "News import request accepted.",
-      );
+      setMessage(data.newsImport.message || "News import completed.");
+      await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to start news import.");
     }
@@ -764,12 +774,12 @@ export default function AdminPage() {
         <button
           type="button"
           onClick={onRunNewsImport}
-          disabled={!adminServerActionsEnabled || serverStatus.newsImport.running}
+          disabled={!newsImportActionsEnabled || serverStatus.newsImport.running}
           className="mt-5 rounded-full bg-ink px-4 py-2 text-sm font-medium text-shell transition hover:bg-ink/90 disabled:opacity-60"
         >
           {serverStatus.newsImport.running ? "News Import Running..." : "Run News Import"}
         </button>
-        {!adminServerActionsEnabled ? (
+        {!newsImportActionsEnabled ? (
           <p className="mt-3 text-sm text-ink/55">
             This action is not available in production yet.
           </p>
@@ -832,6 +842,38 @@ export default function AdminPage() {
                 <p className="mt-1 text-xs uppercase tracking-[0.18em] text-ink/45">
                   {item.source} · {formatDate(item.publishedAt)} · {item.type}
                 </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-[72px_1fr_auto] sm:items-center">
+                  <div className="aspect-[1.15] overflow-hidden rounded-xl border border-ink/10 bg-[#f3f2ee]">
+                    {item.imageUrl ? (
+                      <img
+                        src={item.imageUrl}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        onError={(event) => {
+                          event.currentTarget.src = "/news-fallback.png";
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  <input
+                    value={newsImageDrafts[item.id] ?? ""}
+                    onChange={(event) =>
+                      setNewsImageDrafts((current) => ({
+                        ...current,
+                        [item.id]: event.target.value,
+                      }))
+                    }
+                    className="w-full rounded-full border border-ink/10 bg-white px-3 py-2 text-xs"
+                    placeholder="Image URL"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onNewsImageUpdate(item.id)}
+                    className="rounded-full border border-ink/10 px-3 py-2 text-xs font-medium text-ink"
+                  >
+                    Save image
+                  </button>
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 <select
