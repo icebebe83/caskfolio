@@ -6,11 +6,12 @@ export default async (request) => {
   try {
     const { runNewsImport } = await import("../../scripts/news/import-news.mjs");
     const startedAt = new Date().toISOString();
+    const getEnv = (key) => Netlify.env.get(key) ?? process.env[key] ?? "";
     const result = await runNewsImport({
       env: {
-        NEXT_PUBLIC_SUPABASE_URL: Netlify.env.get("NEXT_PUBLIC_SUPABASE_URL") ?? "",
-        SUPABASE_URL: Netlify.env.get("SUPABASE_URL") ?? "",
-        SUPABASE_SERVICE_ROLE_KEY: Netlify.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+        NEXT_PUBLIC_SUPABASE_URL: getEnv("NEXT_PUBLIC_SUPABASE_URL"),
+        SUPABASE_URL: getEnv("SUPABASE_URL"),
+        SUPABASE_SERVICE_ROLE_KEY: getEnv("SUPABASE_SERVICE_ROLE_KEY"),
       },
       writeOutputFile: false,
       useLocalThumbnails: false,

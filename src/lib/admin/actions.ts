@@ -38,7 +38,8 @@ export async function runNewsImportAction(): Promise<AdminServerStatus> {
   });
 
   if (!response.ok && response.status !== 202) {
-    throw new Error("Unable to start news import.");
+    const data = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(data?.error || "Unable to start news import.");
   }
 
   const data = (await response.json()) as AdminServerStatus;
