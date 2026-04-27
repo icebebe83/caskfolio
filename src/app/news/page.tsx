@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { EmptyState } from "@/components/empty-state";
 import { useLanguage } from "@/components/providers";
-import { fetchNewsEntries, type NewsEntry } from "@/lib/data/news";
+import { fetchNewsEntries, NEWS_PAGE_SIZE, type NewsEntry } from "@/lib/data/news";
 import { formatUiDate } from "@/lib/i18n";
 
 function NewsCardImage({
@@ -38,6 +38,9 @@ export default function NewsPage() {
   const [loading, setLoading] = useState(true);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(1);
+  const [totalArticles, setTotalArticles] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(totalArticles / NEWS_PAGE_SIZE));
 
   useEffect(() => {
     setHasHydrated(true);
@@ -45,19 +48,23 @@ export default function NewsPage() {
 
   useEffect(() => {
     const load = async () => {
+      setLoading(true);
+      setError("");
       try {
-        const data = await fetchNewsEntries();
-        setArticles(data);
+        const data = await fetchNewsEntries(page);
+        setArticles(data.entries);
+        setTotalArticles(data.total);
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "Unable to load news.");
         setArticles([]);
+        setTotalArticles(0);
       } finally {
         setLoading(false);
       }
     };
 
     void load();
-  }, []);
+  }, [page]);
 
   return (
     <div className="space-y-8">
@@ -71,6 +78,13 @@ export default function NewsPage() {
             ? "위스키와 주류 매체의 에디토리얼 업데이트를 모았습니다."
             : "Editorial updates from whisky and spirits publications."}
         </p>
+        {!loading && totalArticles ? (
+          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-ink/45">
+            {language === "kr"
+              ? `최신순 · ${NEWS_PAGE_SIZE}개씩 보기 · 총 ${totalArticles}개`
+              : `Latest first · ${NEWS_PAGE_SIZE} per page · ${totalArticles} total`}
+          </p>
+        ) : null}
       </section>
 
       {hasHydrated && !loading && !articles.length ? (
@@ -126,6 +140,30 @@ export default function NewsPage() {
         ))}
 
       </section>
+
+      {hasHydrated && !loading && totalPages > 1 ? (
+        <nav className="flex items-center justify-center gap-2 text-sm" aria-label="News pages">
+          <button
+            type="button"
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+            disabled={page <= 1}
+            className="rounded-full border border-ink/10 bg-white px-4 py-2 font-medium text-ink transition hover:border-ink/30 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {language === "kr" ? "이전" : "Previous"}
+          </button>
+          <span className="px-3 text-xs font-semibold uppercase tracking-[0.18em] text-ink/50">
+            {page} / {totalPages}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+            disabled={page >= totalPages}
+            className="rounded-full border border-ink/10 bg-white px-4 py-2 font-medium text-ink transition hover:border-ink/30 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {language === "kr" ? "다음" : "Next"}
+          </button>
+        </nav>
+      ) : null}
     </div>
   );
 }

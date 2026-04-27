@@ -37,7 +37,7 @@ export default async (request) => {
         lastFinishedAt: finishedAt,
         lastSuccessAt: finishedAt,
         lastError: null,
-        message: `News import completed. Saved ${result.saved} new article(s), pruned ${result.pruned} row(s), refreshed ${result.count} item(s).`,
+        message: `News import completed. Saved ${result.saved} new article(s), refreshed ${result.count} item(s).`,
       },
       settings: {
         googleOAuth: { configured: true, label: "Configured" },

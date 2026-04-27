@@ -16,6 +16,13 @@ export type NewsEntry = {
   priority?: "high" | "medium" | "low";
 };
 
+export type NewsPageResult = {
+  entries: NewsEntry[];
+  total: number;
+};
+
+export const NEWS_PAGE_SIZE = 16;
+
 function mapNewsRow(row: Record<string, unknown>): NewsEntry {
   const url = String(row.url ?? "");
   return {
@@ -55,16 +62,24 @@ function sortCurated(entries: NewsEntry[]): NewsEntry[] {
   });
 }
 
-export async function fetchNewsEntries(): Promise<NewsEntry[]> {
-  if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
-      .from("news")
-      .select("*")
-      .order("published_at", { ascending: false })
-      .limit(18);
+export async function fetchNewsEntries(page = 1, pageSize = NEWS_PAGE_SIZE): Promise<NewsPageResult> {
+  const safePage = Math.max(1, page);
+  const safePageSize = Math.max(1, pageSize);
+  const from = (safePage - 1) * safePageSize;
+  const to = from + safePageSize - 1;
 
-    if (!error && data?.length) {
-      return sortCurated(data.map((row) => mapNewsRow(row)));
+  if (isSupabaseConfigured && supabase) {
+    const { data, error, count } = await supabase
+      .from("news")
+      .select("*", { count: "exact" })
+      .order("published_at", { ascending: false })
+      .range(from, to);
+
+    if (!error) {
+      return {
+        entries: sortCurated((data ?? []).map((row) => mapNewsRow(row))),
+        total: count ?? data?.length ?? 0,
+      };
     }
   }
 
@@ -79,5 +94,9 @@ export async function fetchNewsEntries(): Promise<NewsEntry[]> {
   }
 
   const data = (await response.json()) as NewsEntry[];
-  return Array.isArray(data) ? sortCurated(data) : [];
+  const entries = Array.isArray(data) ? sortCurated(data) : [];
+  return {
+    entries: entries.slice(from, to + 1),
+    total: entries.length,
+  };
 }

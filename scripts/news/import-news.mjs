@@ -557,58 +557,6 @@ async function fetchExistingUrls(supabase) {
   return new Set(data.map((row) => row.url).filter(Boolean));
 }
 
-async function pruneExistingArticles(supabase) {
-  const { data, error } = await supabase
-    .from("news")
-    .select("id,title,summary,source,url,published_at,image_url,created_at")
-    .limit(1000);
-
-  if (error || !data?.length) {
-    return { removed: 0 };
-  }
-
-  const removableIds = data
-    .filter((row) => {
-      const article = {
-        id: String(row.id ?? row.url ?? ""),
-        title: String(row.title ?? ""),
-        summary: String(row.summary ?? ""),
-        source: String(row.source ?? ""),
-        date: normalizeDate(row.published_at ?? row.created_at),
-        url: String(row.url ?? ""),
-        imageUrl: String(row.image_url ?? FALLBACK_IMAGE),
-        category: inferCategory(`${row.title ?? ""} ${row.summary ?? ""}`),
-        type: inferNewsType(String(row.source ?? ""), String(row.url ?? "")),
-        priority:
-          inferNewsType(String(row.source ?? ""), String(row.url ?? "")) === "video"
-            ? scoreVideoPriority({
-                title: String(row.title ?? ""),
-                summary: String(row.summary ?? ""),
-              })
-            : scorePriority({
-                title: String(row.title ?? ""),
-                summary: String(row.summary ?? ""),
-              }),
-      };
-
-      const relevant = article.type === "video" ? isRelevantVideo(article) : isRelevant(article);
-      return !ALLOWED_SOURCES.has(article.source) || !relevant || article.priority === "low";
-    })
-    .map((row) => row.id)
-    .filter(Boolean);
-
-  if (!removableIds.length) {
-    return { removed: 0 };
-  }
-
-  const { error: deleteError } = await supabase.from("news").delete().in("id", removableIds);
-  if (deleteError) {
-    throw new Error(`Unable to prune existing news rows: ${deleteError.message}`);
-  }
-
-  return { removed: removableIds.length };
-}
-
 function isMissingPriorityColumn(error) {
   const message =
     error instanceof Error
@@ -692,7 +640,7 @@ async function fetchPublishedArticles(supabase) {
     .from("news")
     .select("*")
     .order("published_at", { ascending: false })
-    .limit(36);
+    .limit(160);
   if (error || !data?.length) {
     return [];
   }
@@ -715,13 +663,8 @@ async function fetchPublishedArticles(supabase) {
             ? scoreVideoPriority(row)
             : scorePriority(row),
       external: true,
-    })).filter(
-      (article) =>
-        ALLOWED_SOURCES.has(article.source) &&
-        (article.type === "video" ? isRelevantVideo(article) : isRelevant(article)) &&
-        article.priority !== "low",
-    ),
-  ).slice(0, 18);
+    })),
+  );
 }
 
 function limitVideoShare(articles) {
@@ -745,7 +688,6 @@ export async function runNewsImport(options = {}) {
   );
 
   const supabase = getSupabaseAdmin(env);
-  const { removed } = await pruneExistingArticles(supabase);
   const existingUrls = await fetchExistingUrls(supabase);
   const newArticles = collected.filter((item) => !existingUrls.has(item.url)).slice(0, 3);
   const curatedArticles = collected.slice(0, 18);
@@ -762,7 +704,7 @@ export async function runNewsImport(options = {}) {
 
   const publishedArticles = await fetchPublishedArticles(supabase);
   const fallbackArticles = limitVideoShare(collected).slice(0, 18);
-  const outputArticles = limitVideoShare(publishedArticles.length ? publishedArticles : fallbackArticles).map((article) => ({
+  const outputArticles = (publishedArticles.length ? publishedArticles : fallbackArticles).map((article) => ({
     ...article,
     imageUrl: article.imageUrl || FALLBACK_IMAGE,
   }));
@@ -774,7 +716,6 @@ export async function runNewsImport(options = {}) {
 
   const summary = {
     saved: newArticles.length,
-    pruned: removed,
     count: outputArticles.length,
     latestTitle: outputArticles[0]?.title ?? "",
     wroteOutputFile: writeOutputFile,
@@ -782,11 +723,11 @@ export async function runNewsImport(options = {}) {
 
   if (writeOutputFile) {
     console.log(
-      `[news-import] saved ${summary.saved} new article(s), pruned ${summary.pruned} row(s), and refreshed ${OUTPUT_PATH}`,
+      `[news-import] saved ${summary.saved} new article(s) and refreshed ${OUTPUT_PATH}`,
     );
   } else {
     console.log(
-      `[news-import] saved ${summary.saved} new article(s), pruned ${summary.pruned} row(s), and refreshed Supabase news rows`,
+      `[news-import] saved ${summary.saved} new article(s) and refreshed Supabase news rows`,
     );
   }
 
