@@ -7,7 +7,7 @@ import { BottleMarketCard } from "@/components/bottle-market-card";
 import { EmptyState } from "@/components/empty-state";
 import { ListingCard } from "@/components/listing-card";
 import { PriceHistoryChart } from "@/components/price-history-chart";
-import { useLanguage } from "@/components/providers";
+import { useAuth, useLanguage } from "@/components/providers";
 import { getBottleImageForSurface, getListingImageForSurface } from "@/lib/media/images";
 import { resolveUsdKrwRate } from "@/lib/fx";
 import { formatCategoryLabel, formatKrw, formatListingStatus, formatUsd, median, toDate } from "@/lib/format";
@@ -18,6 +18,8 @@ import {
   fetchBottleReferencePrice,
   fetchBottles,
   fetchListingsForBottle,
+  fetchWishlistBottleIds,
+  setBottleWishlist,
 } from "@/lib/data/store";
 import { formatUiDate, tStatus } from "@/lib/i18n";
 import type { Bottle, BottleReferencePrice, Listing } from "@/lib/types";
@@ -36,6 +38,7 @@ type ChartSeriesPoint = {
 
 function BottlePageContent() {
   const searchParams = useSearchParams();
+  const { user } = useAuth();
   const { language } = useLanguage();
   const bottleId = searchParams.get("id") ?? "";
   const [bottle, setBottle] = useState<Bottle | null>(null);
@@ -47,6 +50,10 @@ function BottlePageContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showAllRecentListings, setShowAllRecentListings] = useState(false);
+  const [isWishlisted, setIsWishlisted] = useState(false);
+  const [wishlistLoading, setWishlistLoading] = useState(false);
+  const [wishlistUpdating, setWishlistUpdating] = useState(false);
+  const [wishlistMessage, setWishlistMessage] = useState("");
 
   useEffect(() => {
     if (!bottleId) {
@@ -96,6 +103,71 @@ function BottlePageContent() {
 
     void load();
   }, [bottleId]);
+
+  useEffect(() => {
+    if (!bottleId || !user || !isBackendConfigured) {
+      setIsWishlisted(false);
+      setWishlistLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setWishlistLoading(true);
+    setWishlistMessage("");
+
+    void fetchWishlistBottleIds()
+      .then((ids) => {
+        if (!cancelled) setIsWishlisted(ids.has(bottleId));
+      })
+      .catch(() => {
+        if (!cancelled) setWishlistMessage(language === "kr" ? "위시리스트를 불러올 수 없습니다." : "Unable to load wishlist.");
+      })
+      .finally(() => {
+        if (!cancelled) setWishlistLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bottleId, language, user]);
+
+  const onWishlistToggle = async () => {
+    if (!bottleId || wishlistUpdating) return;
+
+    if (!user) {
+      setWishlistMessage(language === "kr" ? "위시리스트는 로그인 후 사용할 수 있습니다." : "Sign in to use wishlist.");
+      return;
+    }
+
+    const nextWishlisted = !isWishlisted;
+    setWishlistUpdating(true);
+    setWishlistMessage("");
+    setIsWishlisted(nextWishlisted);
+
+    try {
+      await setBottleWishlist(bottleId, nextWishlisted);
+      setWishlistMessage(
+        nextWishlisted
+          ? language === "kr"
+            ? "위시리스트에 추가했습니다."
+            : "Added to wishlist."
+          : language === "kr"
+            ? "위시리스트에서 제거했습니다."
+            : "Removed from wishlist.",
+      );
+    } catch (nextError) {
+      setIsWishlisted(!nextWishlisted);
+      setWishlistMessage(
+        nextError instanceof Error
+          ? nextError.message
+          : language === "kr"
+            ? "위시리스트를 업데이트할 수 없습니다."
+            : "Unable to update wishlist.",
+      );
+    } finally {
+      setWishlistUpdating(false);
+    }
+  };
 
   if (!bottleId) {
     return (
@@ -302,14 +374,35 @@ function BottlePageContent() {
             </div>
           </div>
 
-          <div className="mt-14">
+          <div className="mt-14 flex flex-wrap items-center gap-3">
             <a
               href="#listing-archive"
               className="inline-flex bg-[#111111] px-10 py-5 text-xs font-bold uppercase tracking-[0.24em] text-white transition-colors hover:bg-black"
             >
               {language === "kr" ? "실시간 등록 보기" : "View live listings"}
             </a>
+            <button
+              type="button"
+              onClick={onWishlistToggle}
+              disabled={wishlistLoading || wishlistUpdating}
+              className={`inline-flex border px-7 py-5 text-xs font-bold uppercase tracking-[0.2em] transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                isWishlisted
+                  ? "border-[#111111] bg-white text-[#111111]"
+                  : "border-[#d8d1c7] bg-white text-[#7b746a] hover:border-[#111111] hover:text-[#111111]"
+              }`}
+            >
+              {isWishlisted
+                ? language === "kr"
+                  ? "♥ 위시리스트"
+                  : "♥ Wishlisted"
+                : language === "kr"
+                  ? "♡ 위시리스트"
+                  : "♡ Wishlist"}
+            </button>
           </div>
+          {wishlistMessage ? (
+            <p className="mt-3 text-sm text-[#7b746a]">{wishlistMessage}</p>
+          ) : null}
         </div>
       </section>
 

@@ -96,6 +96,14 @@ export interface BottleReferencePrice {
   matchedVolumeMl?: number | null;
 }
 
+export interface WishlistBottle {
+  id: string;
+  bottleId: string;
+  createdBy: string;
+  createdAt: AppDateValue;
+  bottle: Bottle;
+}
+
 export interface HomepageBanner {
   id: string;
   slotKey: string;

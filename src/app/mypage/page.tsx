@@ -8,11 +8,13 @@ import { EmptyState } from "@/components/empty-state";
 import { useLanguage } from "@/components/providers";
 import { SetupNotice } from "@/components/setup-notice";
 import { useAuth } from "@/components/providers";
-import { getListingImageForSurface, isDefaultRegisterBottleImage } from "@/lib/media/images";
+import { getBottleImageForSurface, getListingImageForSurface, isDefaultRegisterBottleImage } from "@/lib/media/images";
 import { formatDate, formatUsd, toDate } from "@/lib/format";
 import { isBackendConfigured } from "@/lib/backend/client";
-import { fetchAllListings, fetchBottles } from "@/lib/data/store";
-import type { Bottle, Listing } from "@/lib/types";
+import { fetchAllListings, fetchBottles, fetchWishlistBottles } from "@/lib/data/store";
+import type { Bottle, Listing, WishlistBottle } from "@/lib/types";
+
+const MY_COLLECTION_PAGE_SIZE = 8;
 
 type CollectionEntry = {
   bottle: Bottle;
@@ -24,11 +26,14 @@ type CollectionEntry = {
 export default function MyPage() {
   const { user, loading: authLoading } = useAuth();
   const { language } = useLanguage();
+  const [allListings, setAllListings] = useState<Listing[]>([]);
   const [bottles, setBottles] = useState<Bottle[]>([]);
   const [listings, setListings] = useState<Listing[]>([]);
+  const [wishlistEntries, setWishlistEntries] = useState<WishlistBottle[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [error, setError] = useState("");
+  const [collectionPage, setCollectionPage] = useState(1);
 
   useEffect(() => {
     setHasHydrated(true);
@@ -42,7 +47,12 @@ export default function MyPage() {
 
     const load = async () => {
       try {
-        const [allListings, allBottles] = await Promise.all([fetchAllListings(500), fetchBottles()]);
+        const [allListings, allBottles, wishlist] = await Promise.all([
+          fetchAllListings(500),
+          fetchBottles(),
+          fetchWishlistBottles(),
+        ]);
+        setAllListings(allListings);
         setListings(
           allListings
             .filter((listing) => listing.createdBy === user.uid)
@@ -52,6 +62,7 @@ export default function MyPage() {
             ),
         );
         setBottles(allBottles);
+        setWishlistEntries(wishlist);
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "Unable to load your portfolio.");
       } finally {
@@ -97,6 +108,34 @@ export default function MyPage() {
       .filter((entry): entry is CollectionEntry => Boolean(entry));
   }, [bottles, listings]);
 
+  const collectionPageCount = Math.max(
+    1,
+    Math.ceil(collectionEntries.length / MY_COLLECTION_PAGE_SIZE),
+  );
+  const visibleCollectionEntries = collectionEntries.slice(
+    (collectionPage - 1) * MY_COLLECTION_PAGE_SIZE,
+    collectionPage * MY_COLLECTION_PAGE_SIZE,
+  );
+
+  const latestListingByBottleId = useMemo(() => {
+    const listingMap = new Map<string, Listing>();
+
+    allListings.forEach((listing) => {
+      const current = listingMap.get(listing.bottleId);
+      const currentTime = toDate(current?.createdAt)?.getTime() ?? 0;
+      const nextTime = toDate(listing.createdAt)?.getTime() ?? 0;
+      if (!current || nextTime > currentTime) {
+        listingMap.set(listing.bottleId, listing);
+      }
+    });
+
+    return listingMap;
+  }, [allListings]);
+
+  useEffect(() => {
+    setCollectionPage((current) => Math.min(Math.max(1, current), collectionPageCount));
+  }, [collectionPageCount]);
+
   const totalPortfolioValueUsd = collectionEntries.reduce(
     (sum, entry) => sum + entry.totalBottleValueUsd,
     0,
@@ -124,7 +163,7 @@ export default function MyPage() {
         <p className="mt-3 text-sm leading-6 text-ink/70">
           {language === "kr"
             ? "바틀 아카이브를 불러오기 전에 현재 세션을 확인하고 있습니다."
-            : "We&apos;re confirming your session before loading your bottle archive."}
+            : "We're confirming your session before loading your bottle archive."}
         </p>
       </div>
     );
@@ -225,7 +264,7 @@ export default function MyPage() {
         ) : null}
 
         <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4">
-          {collectionEntries.map((entry) => (
+          {visibleCollectionEntries.map((entry) => (
             <Link
               key={entry.bottle.id}
               href={`/bottle?id=${entry.bottle.id}`}
@@ -266,6 +305,103 @@ export default function MyPage() {
           ))}
 
         </div>
+        {!loading && collectionPageCount > 1 ? (
+          <nav className="flex items-center justify-center gap-2 text-sm" aria-label="My collection pages">
+            <button
+              type="button"
+              onClick={() => setCollectionPage((current) => Math.max(1, current - 1))}
+              disabled={collectionPage <= 1}
+              className="rounded-full border border-[#e2ddd3] bg-white px-4 py-2 font-semibold text-[#111111] transition hover:border-[#111111] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {language === "kr" ? "이전" : "Previous"}
+            </button>
+            <span className="px-3 text-[10px] font-bold uppercase tracking-[0.2em] text-[#7a746b]">
+              {collectionPage} / {collectionPageCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCollectionPage((current) => Math.min(collectionPageCount, current + 1))}
+              disabled={collectionPage >= collectionPageCount}
+              className="rounded-full border border-[#e2ddd3] bg-white px-4 py-2 font-semibold text-[#111111] transition hover:border-[#111111] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {language === "kr" ? "다음" : "Next"}
+            </button>
+          </nav>
+        ) : null}
+      </section>
+
+      <section className="space-y-8 border-t border-[#e9e4da] pt-10">
+        <div className="flex items-center justify-between gap-4 border-b border-[#e9e4da] pb-4">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#8b5a34]">
+              {language === "kr" ? "위시리스트" : "Wishlist"}
+            </p>
+            <h2 className="mt-2 font-[family-name:var(--font-display)] text-2xl font-semibold tracking-[-0.03em] text-[#111111]">
+              {language === "kr" ? "저장한 바틀" : "Saved bottles"}
+            </h2>
+          </div>
+          <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#7a746b]">
+            {wishlistEntries.length}
+          </span>
+        </div>
+
+        {!loading && !wishlistEntries.length ? (
+          <div className="rounded-2xl border border-[#e4dfd6] bg-white px-5 py-4 text-sm text-[#666159]">
+            {language === "kr"
+              ? "아직 위시리스트에 추가한 바틀이 없습니다."
+              : "No saved bottles in your wishlist yet."}
+          </div>
+        ) : null}
+
+        {wishlistEntries.length ? (
+          <div className="flex flex-col gap-6">
+            {wishlistEntries.map((entry) => {
+              const latestListing = latestListingByBottleId.get(entry.bottle.id) ?? null;
+              const imageUrl = latestListing
+                ? getListingImageForSurface(latestListing, entry.bottle, "mypage-card")
+                : getBottleImageForSurface(entry.bottle, "market-card");
+              const isDefaultWishlistImage = isDefaultRegisterBottleImage(imageUrl);
+
+              return (
+                <Link
+                  key={entry.id}
+                  href={`/bottle?id=${entry.bottle.id}`}
+                  className="group flex items-center gap-6 transition hover:translate-x-1"
+                >
+                  <div className="h-24 w-24 shrink-0 overflow-hidden bg-[#f3f2ee]">
+                    {imageUrl ? (
+                      <img
+                        src={imageUrl}
+                        alt={entry.bottle.name}
+                        className={`h-full w-full bg-[#f3f2ee] object-contain object-center transition duration-500 group-hover:scale-[1.02] ${
+                          isDefaultWishlistImage ? "p-2.5" : "p-2"
+                        }`}
+                      />
+                    ) : (
+                      <div className="h-full w-full bg-[#ece9e2]" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[9px] font-bold uppercase tracking-[0.24em] text-[#7a746b]">
+                      {entry.bottle.brand || entry.bottle.category}
+                    </p>
+                    <h3 className="truncate text-lg font-bold text-[#111111]">
+                      {entry.bottle.name}
+                    </h3>
+                    <div className="mt-1 flex items-center gap-4">
+                      <span className="text-sm font-bold text-[#111111]">
+                        {language === "kr" ? "저장됨" : "Saved"}
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#7a746b]">
+                        {formatDate(entry.createdAt)}
+                      </span>
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
       {featuredEntry ? (

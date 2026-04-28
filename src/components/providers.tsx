@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 
 import type { AppUser } from "@/lib/types";
 import { syncAuthProfile } from "@/lib/data/store";
+import { withTimeout } from "@/lib/data/shared";
 import { LANGUAGE_STORAGE_KEY, type Language } from "@/lib/i18n";
 import { supabase } from "@/lib/supabase/client";
 
@@ -16,6 +17,8 @@ const AuthContext = createContext<AuthContextValue>({
   user: null,
   loading: true,
 });
+
+const AUTH_SESSION_TIMEOUT_MS = 4000;
 
 interface LanguageContextValue {
   language: Language;
@@ -86,9 +89,17 @@ export function Providers({ children }: { children: React.ReactNode }) {
         .catch(() => undefined);
     };
 
-    void supabase.auth.getSession().then(({ data }) => {
-      applySessionUser(data.session?.user);
-    });
+    void withTimeout(
+      supabase.auth.getSession(),
+      AUTH_SESSION_TIMEOUT_MS,
+      "Authentication check timed out.",
+    )
+      .then(({ data }) => {
+        applySessionUser(data.session?.user);
+      })
+      .catch(() => {
+        applySessionUser(null);
+      });
 
     const {
       data: { subscription },

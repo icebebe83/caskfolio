@@ -5,3 +5,4 @@ export * from "@/lib/data/reports";
 export * from "@/lib/data/admin";
 export * from "@/lib/data/content-slots";
 export * from "@/lib/data/audit";
+export * from "@/lib/data/wishlist";

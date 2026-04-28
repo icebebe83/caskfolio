@@ -31,6 +31,8 @@ The current stack is intentionally lightweight:
 
 ## Key docs
 
+- Product identity and structure:
+  - [/Users/darren/Desktop/Vibe cording/Liquor v.Codex/docs/caskfolio-identity-and-structure.md](/Users/darren/Desktop/Vibe%20cording/Liquor%20v.Codex/docs/caskfolio-identity-and-structure.md)
 - Image pipeline:
   - [/Users/darren/Desktop/Vibe cording/Liquor v.Codex/docs/image-pipeline.md](/Users/darren/Desktop/Vibe%20cording/Liquor%20v.Codex/docs/image-pipeline.md)
 - RLS and storage policy:

@@ -115,6 +115,14 @@ create table public.bottle_reference_prices (
   created_at timestamptz not null default now()
 );
 
+create table public.bottle_wishlists (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  bottle_id uuid not null references public.bottles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (user_id, bottle_id)
+);
+
 create table public.content_slots (
   id uuid primary key default gen_random_uuid(),
   slot_key text not null unique,
@@ -193,6 +201,8 @@ create index idx_reports_status on public.reports(status);
 create index idx_fx_rates_pair_updated on public.fx_rates(pair, updated_at desc);
 create index idx_bottle_reference_prices_bottle_id on public.bottle_reference_prices(bottle_id);
 create index idx_bottle_reference_prices_updated_at on public.bottle_reference_prices(updated_at desc);
+create index idx_bottle_wishlists_user_created on public.bottle_wishlists(user_id, created_at desc);
+create index idx_bottle_wishlists_bottle_id on public.bottle_wishlists(bottle_id);
 create index idx_content_slots_slot_key on public.content_slots(slot_key);
 create index idx_content_slots_display_order on public.content_slots(display_order);
 create index idx_audit_logs_created_at on public.audit_logs(created_at desc);
@@ -207,6 +217,7 @@ alter table public.news enable row level security;
 alter table public.reports enable row level security;
 alter table public.fx_rates enable row level security;
 alter table public.bottle_reference_prices enable row level security;
+alter table public.bottle_wishlists enable row level security;
 alter table public.content_slots enable row level security;
 alter table public.audit_logs enable row level security;
 
@@ -294,6 +305,15 @@ for select using (true);
 
 create policy "bottle_reference_prices_write_admin" on public.bottle_reference_prices
 for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+create policy "bottle_wishlists_select_own" on public.bottle_wishlists
+for select to authenticated using (user_id = auth.uid());
+
+create policy "bottle_wishlists_insert_own" on public.bottle_wishlists
+for insert to authenticated with check (user_id = auth.uid());
+
+create policy "bottle_wishlists_delete_own" on public.bottle_wishlists
+for delete to authenticated using (user_id = auth.uid());
 
 create policy "content_slots_read_all" on public.content_slots
 for select using (true);

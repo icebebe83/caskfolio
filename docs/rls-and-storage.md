@@ -38,6 +38,7 @@ Signed-in users may:
 - create `listings` where `user_id = auth.uid()`
 - update or delete their own `listings`
 - create `reports` where `user_id = auth.uid()`
+- create and delete their own `bottle_wishlists` rows
 - upload images to the shared storage bucket from the browser
 
 Signed-in users must not:
@@ -108,6 +109,10 @@ The canonical policy source is:
   - `listings_delete_owner_or_admin`
 - `reports`
   - `reports_insert_own`
+- `bottle_wishlists`
+  - `bottle_wishlists_select_own`
+  - `bottle_wishlists_insert_own`
+  - `bottle_wishlists_delete_own`
 
 ### Admin-controlled tables
 
@@ -190,6 +195,12 @@ using (bucket_id = 'caskindex-images');
 
 The app currently uses `getPublicUrl(...)`, so the bucket is expected to be public-readable or otherwise expose stable public object URLs.
 
+Admin-only image uploads for bottle master images and homepage banners are defined here:
+
+- [/Users/darren/Desktop/Vibe cording/Liquor v.Codex/supabase/storage_admin_image_policies.sql](/Users/darren/Desktop/Vibe%20cording/Liquor%20v.Codex/supabase/storage_admin_image_policies.sql)
+
+Apply that SQL in Supabase SQL Editor if Admin image uploads fail with `new row violates row-level security policy`.
+
 ## Data ownership model
 
 ### Bottles
@@ -208,6 +219,12 @@ The app currently uses `getPublicUrl(...)`, so the bucket is expected to be publ
 
 - Curated external content
 - Server-ingested only
+
+### Wishlist
+
+- User-owned saved bottle list
+- References canonical `bottles`
+- Read/write limited to the signed-in user
 
 ### Content slots
 

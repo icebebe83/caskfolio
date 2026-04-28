@@ -23,6 +23,36 @@ type FieldErrors = Partial<
   >
 >;
 
+type InAppApp = "kakao" | "instagram" | "facebook" | "embedded";
+type DeviceType = "android" | "ios" | "other";
+
+type InAppBrowserInfo = {
+  app: InAppApp;
+  device: DeviceType;
+};
+
+function detectInAppBrowser(userAgent: string): InAppBrowserInfo | null {
+  const ua = userAgent.toLowerCase();
+  const device: DeviceType = /android/.test(ua) ? "android" : /iphone|ipad|ipod/.test(ua) ? "ios" : "other";
+
+  if (ua.includes("kakaotalk")) return { app: "kakao", device };
+  if (ua.includes("instagram")) return { app: "instagram", device };
+  if (ua.includes("fban") || ua.includes("fbav") || ua.includes("fb_iab") || ua.includes("fb4a")) {
+    return { app: "facebook", device };
+  }
+  if (
+    ua.includes("; wv") ||
+    ua.includes("webview") ||
+    ua.includes("line/") ||
+    ua.includes("naver") ||
+    ua.includes("daumapps")
+  ) {
+    return { app: "embedded", device };
+  }
+
+  return null;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const { user } = useAuth();
@@ -39,6 +69,8 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isPending, startTransition] = useTransition();
+  const [inAppBrowser, setInAppBrowser] = useState<InAppBrowserInfo | null>(null);
+  const [showExternalBrowserPrompt, setShowExternalBrowserPrompt] = useState(false);
   const fieldIds = {
     firstName: "auth-first-name",
     lastName: "auth-last-name",
@@ -54,6 +86,11 @@ export default function LoginPage() {
       router.replace("/mypage");
     }
   }, [router, user]);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined") return;
+    setInAppBrowser(detectInAppBrowser(navigator.userAgent));
+  }, []);
 
   if (!isBackendConfigured) {
     return (
@@ -136,6 +173,11 @@ export default function LoginPage() {
   const onGoogleSignIn = () => {
     resetFeedback();
 
+    if (inAppBrowser) {
+      setShowExternalBrowserPrompt(true);
+      return;
+    }
+
     startTransition(async () => {
       try {
         await signInWithGoogle();
@@ -144,6 +186,58 @@ export default function LoginPage() {
       }
     });
   };
+
+  const openInExternalBrowser = async () => {
+    if (typeof window === "undefined") return;
+
+    const currentUrl = window.location.href;
+    const scheme = window.location.protocol.replace(":", "") || "https";
+    const hostAndPath = currentUrl.replace(/^https?:\/\//, "");
+
+    try {
+      await navigator.clipboard?.writeText(currentUrl);
+    } catch {
+      // Ignore clipboard failures. Instructions below still explain the fallback.
+    }
+
+    if (inAppBrowser?.device === "android") {
+      window.location.href = `intent://${hostAndPath}#Intent;scheme=${scheme};package=com.android.chrome;end`;
+      return;
+    }
+
+    if (inAppBrowser?.device === "ios") {
+      window.open(currentUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    window.open(currentUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const getExternalBrowserTitle = () =>
+    language === "kr" ? "외부 브라우저에서 계속하세요" : "Continue in your browser";
+
+  const getExternalBrowserInstruction = () => {
+    if (inAppBrowser?.device === "android") {
+      return language === "kr"
+        ? "Google 로그인을 계속하려면 이 페이지를 Chrome 또는 Samsung Internet에서 열어주세요."
+        : "Please open this page in Chrome or Samsung Internet to continue Google login.";
+    }
+
+    if (inAppBrowser?.device === "ios") {
+      return language === "kr"
+        ? "Google 로그인을 계속하려면 이 페이지를 Safari 또는 Chrome에서 열어주세요."
+        : "Please open this page in Safari or Chrome to continue Google login.";
+    }
+
+    return language === "kr"
+      ? "이 앱 내 브라우저에서는 Google 로그인이 실패할 수 있습니다. 외부 브라우저에서 다시 열어주세요."
+      : "Google login may fail inside this in-app browser. Please reopen this page in your external browser.";
+  };
+
+  const getExternalBrowserHint = () =>
+    language === "kr"
+      ? "자동으로 열리지 않으면 공유 메뉴에서 브라우저 열기를 선택하거나, 복사된 링크를 외부 브라우저에 붙여넣으세요."
+      : "If the page does not open automatically, use the in-app share menu to open it in your browser, or paste the copied link into your browser.";
 
   return (
     <div className="mx-auto w-full max-w-3xl">
@@ -168,7 +262,15 @@ export default function LoginPage() {
             <button
               key={item.key}
               type="button"
-              onClick={() => setMode(item.key as "signin" | "register")}
+              onClick={() => {
+                if (item.key === "register" && inAppBrowser) {
+                  resetFeedback();
+                  setShowExternalBrowserPrompt(true);
+                  return;
+                }
+                setShowExternalBrowserPrompt(false);
+                setMode(item.key as "signin" | "register");
+              }}
               className={`rounded-full px-4 py-2 text-sm font-medium transition ${
                 mode === item.key
                   ? "bg-[#171717] text-white"
@@ -213,6 +315,17 @@ export default function LoginPage() {
             </svg>
             <span>{language === "kr" ? "Google로 계속하기" : "Continue with Google"}</span>
           </button>
+
+          {showExternalBrowserPrompt ? (
+            <div className="rounded-2xl border border-[#e2ddd3] bg-[#f8f5ef] p-4 text-sm text-ink/80">
+              <p className="font-medium text-ink">{getExternalBrowserTitle()}</p>
+              <p className="mt-2 leading-6">{getExternalBrowserInstruction()}</p>
+              <button type="button" onClick={openInExternalBrowser} className="button-primary mt-4">
+                {language === "kr" ? "브라우저에서 열기" : "Open in browser"}
+              </button>
+              <p className="mt-3 text-xs leading-5 text-ink/60">{getExternalBrowserHint()}</p>
+            </div>
+          ) : null}
 
           <div className="flex items-center gap-3 text-xs uppercase tracking-[0.14em] text-neutral-400">
             <div className="h-px flex-1 bg-neutral-200" />
