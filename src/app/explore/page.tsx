@@ -678,7 +678,7 @@ function ExplorePageContent() {
         </section>
       ) : null}
 
-      {!showLoading && !isSearchView ? (
+      {!isSearchView ? (
         <section className="space-y-4 rounded-2xl border border-[#e4dfd6] bg-white p-4 sm:p-5">
           <div className="space-y-2">
             <p className="text-[10px] font-extrabold uppercase tracking-[0.24em] text-[#8f877d]">
@@ -730,10 +730,14 @@ function ExplorePageContent() {
 
           <p className="text-sm text-[#666159]">
             {language === "kr"
-              ? hasMoreBottlePages
+              ? showLoading
+                ? "검색 결과를 불러오는 중입니다..."
+                : hasMoreBottlePages
                 ? `${filteredBottleEntries.length}개 로드됨 · 기본 후보 ${totalBottleCount}개`
                 : `${filteredBottleEntries.length}개의 바틀이 현재 필터에 일치합니다.`
-              : hasMoreBottlePages
+              : showLoading
+                ? "Loading matching bottles..."
+                : hasMoreBottlePages
                 ? `${filteredBottleEntries.length} loaded · ${totalBottleCount} base bottle${totalBottleCount === 1 ? "" : "s"} available`
                 : `${filteredBottleEntries.length} bottle${filteredBottleEntries.length === 1 ? "" : "s"} matched the current filters.`}
           </p>

@@ -1,5 +1,10 @@
 import { DEFAULT_REGISTER_BOTTLE_IMAGE, uploadBottleMasterImage } from "@/lib/media/images";
 import { appendAuditLog } from "@/lib/data/audit";
+import {
+  getBottleBaseIdentityKey,
+  getBottleBatchIdentityPart,
+  isSameBottleIdentity,
+} from "@/lib/bottle-identity";
 import { clearLocalBottles } from "@/lib/local-fallback";
 import { assertSupabaseConfigured, supabase } from "@/lib/supabase/client";
 import type { Bottle, BottleReferencePrice, SpiritCategory } from "@/lib/types";
@@ -47,7 +52,10 @@ export async function createBottle(input: {
 
   const existingBottleLookup = async (): Promise<Bottle | null> => {
     try {
-      const { data, error } = await withTimeout(
+      const { data, error } = await withTimeout<{
+        data: Record<string, unknown> | null;
+        error: unknown;
+      }>(
         Promise.resolve(
           supabase!
             .from("bottles")
@@ -66,10 +74,56 @@ export async function createBottle(input: {
         "Checking for an existing bottle took too long.",
       );
 
-      if (error || !data) return null;
+      if (!error && data) {
+        const row = data as Record<string, unknown>;
+        return mapBottleRow(row);
+      }
 
-      const row = data as Record<string, unknown>;
-      return mapBottleRow(row);
+    } catch {
+      // Continue to a normalized lookup below.
+    }
+
+    try {
+      const { data, error } = await withTimeout<{
+        data: Record<string, unknown>[] | null;
+        error: unknown;
+      }>(
+        Promise.resolve(
+          supabase!
+            .from("bottles")
+            .select("*")
+            .eq("category", payload.category)
+            .ilike("name", payload.name)
+            .limit(20) as never,
+        ),
+        5000,
+        "Checking for matching bottles took too long.",
+      );
+
+      if (error || !Array.isArray(data)) return null;
+
+      const candidates = data.map((row) => mapBottleRow(row as Record<string, unknown>));
+      const target = {
+        category: payload.category,
+        name: payload.name,
+        brand: payload.brand,
+        batch: payload.batch,
+        ageStatement: payload.age_statement,
+        abv: payload.abv,
+        volumeMl: payload.volume_ml,
+      };
+      const exactMatch = candidates.find((candidate) => isSameBottleIdentity(candidate, target));
+      if (exactMatch) return exactMatch;
+
+      const targetBaseKey = getBottleBaseIdentityKey(target);
+      const sameBaseCandidates = candidates.filter(
+        (candidate) => getBottleBaseIdentityKey(candidate) === targetBaseKey,
+      );
+      const nonBlankBatches = new Set(
+        [...sameBaseCandidates.map(getBottleBatchIdentityPart), getBottleBatchIdentityPart(target)].filter(Boolean),
+      );
+
+      return nonBlankBatches.size <= 1 ? sameBaseCandidates[0] ?? null : null;
     } catch {
       return null;
     }

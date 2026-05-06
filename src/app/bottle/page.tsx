@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/empty-state";
 import { ListingCard } from "@/components/listing-card";
 import { PriceHistoryChart } from "@/components/price-history-chart";
 import { useAuth, useLanguage } from "@/components/providers";
+import { getEquivalentBottleGroup } from "@/lib/bottle-identity";
 import { getBottleImageForSurface, getListingImageForSurface } from "@/lib/media/images";
 import { resolveUsdKrwRate } from "@/lib/fx";
 import { formatCategoryLabel, formatKrw, formatListingStatus, formatUsd, median, toDate } from "@/lib/format";
@@ -17,7 +18,7 @@ import {
   fetchBottleById,
   fetchBottleReferencePrice,
   fetchBottles,
-  fetchListingsForBottle,
+  fetchListingsForBottleIds,
   fetchWishlistBottleIds,
   setBottleWishlist,
 } from "@/lib/data/store";
@@ -74,14 +75,18 @@ function BottlePageContent() {
 
     const load = async () => {
       try {
-        const [bottleDoc, listingDocs, fxState, bottleDocs, allListingDocs, referenceDoc] = await Promise.all([
+        const [bottleDoc, fxState, bottleDocs, allListingDocs, referenceDoc] = await Promise.all([
           fetchBottleById(bottleId),
-          fetchListingsForBottle(bottleId),
           resolveUsdKrwRate(),
           fetchBottles(),
           fetchAllListings(200),
           fetchBottleReferencePrice(bottleId),
         ]);
+        const equivalentBottleIds =
+          bottleDoc && bottleDocs.length
+            ? getEquivalentBottleGroup(bottleDocs, bottleDoc).map((item) => item.id)
+            : [bottleId];
+        const listingDocs = await fetchListingsForBottleIds(equivalentBottleIds);
         setBottle(bottleDoc);
         setAllBottles(bottleDocs);
         setAllListings(allListingDocs);
@@ -226,8 +231,13 @@ function BottlePageContent() {
       timestamp: point.timestamp ?? 0,
       price: typeof point.price === "number" && Number.isFinite(point.price) ? point.price : null,
     }));
+  const equivalentBottleIds = bottle ? new Set(getEquivalentBottleGroup(allBottles, bottle).map((item) => item.id)) : new Set<string>();
   const relatedBottles = allBottles
-    .filter((item) => item.id !== bottle?.id && item.category === bottle?.category)
+    .filter(
+      (item) =>
+        !equivalentBottleIds.has(item.id) &&
+        item.category === bottle?.category,
+    )
     .slice(0, 4)
     .map((item) => {
       const relatedListings = allListings.filter((listing) => listing.bottleId === item.id);
