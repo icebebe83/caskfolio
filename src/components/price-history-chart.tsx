@@ -30,6 +30,14 @@ export function PriceHistoryChart({
   const { language } = useLanguage();
   const hasReferenceLine =
     typeof referencePrice === "number" && Number.isFinite(referencePrice);
+  const chartValues = [
+    ...points
+      .map((point) => point.price)
+      .filter((price): price is number => typeof price === "number" && Number.isFinite(price)),
+    ...(hasReferenceLine ? [referencePrice] : []),
+  ];
+  const maxChartValue = chartValues.length ? Math.max(...chartValues) : 0;
+  const yAxisMax = Math.max(10, Math.ceil((maxChartValue * 1.12) / 10) * 10);
 
   return (
     <div className="panel h-[320px] p-4">
@@ -42,6 +50,7 @@ export function PriceHistoryChart({
             tickLine={false}
             axisLine={false}
             width={50}
+            domain={[0, yAxisMax]}
           />
           <Tooltip
             formatter={(value, _name, item) => {

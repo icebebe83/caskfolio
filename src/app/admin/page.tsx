@@ -50,7 +50,6 @@ import {
   reorderHomepageBanners,
   saveHomepageBanner,
   saveBottleReferencePrice,
-  seedSampleData,
   syncLocalHomepageBannersToRemote,
   updateBottle,
   updateBottleHotFlag,
@@ -278,11 +277,6 @@ export default function AdminPage() {
         setError(nextError instanceof Error ? nextError.message : "Admin action failed.");
       }
     });
-  };
-
-  const onSeed = () => {
-    if (!user) return;
-    withAction(() => seedSampleData(user), "Sample data seeded.");
   };
 
   const onListingAction = (listingId: string, status: Listing["status"]) => {
@@ -1586,7 +1580,7 @@ export default function AdminPage() {
 
       <div className="space-y-8">
         <section className="panel p-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
             <div>
               <p className="text-xs uppercase tracking-[0.24em] text-cask">Admin console</p>
               <h1 className="mt-3 font-[family-name:var(--font-display)] text-4xl font-semibold text-ink">
@@ -1596,14 +1590,6 @@ export default function AdminPage() {
                 Review archive activity, moderate listings, and manage editorial operations from one place.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={onSeed}
-              disabled={isPending}
-              className="rounded-full bg-cask px-5 py-3 text-sm font-medium text-white transition hover:bg-cask/90 disabled:opacity-60"
-            >
-              Seed example data
-            </button>
           </div>
           {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
           {message ? <p className="mt-4 text-sm text-emerald-700">{message}</p> : null}
