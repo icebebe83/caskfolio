@@ -60,6 +60,12 @@ textarea {
   box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.06);
 }
 
+.field-invalid,
+.field-invalid:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.08);
+}
+
 .button-primary {
   background: var(--accent);
   color: white;

@@ -32,6 +32,10 @@ function isEnglishBottleText(value: string): boolean {
   return sanitizeEnglishBottleText(value) === value;
 }
 
+function normalizeBottleLookupText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 type SubmitStage =
   | "loading-archive"
   | "creating-bottle"
@@ -74,6 +78,8 @@ export default function SubmitPage() {
   const [submitStage, setSubmitStage] = useState<SubmitStage | null>(null);
   const [submitStatus, setSubmitStatus] = useState("");
   const [redirectHref, setRedirectHref] = useState("");
+  const [invalidBottleFields, setInvalidBottleFields] = useState<Set<string>>(new Set());
+  const [autofillStatus, setAutofillStatus] = useState("");
   const fieldIds = {
     bottleQuery: "submit-bottle-query",
     newCategory: "submit-new-category",
@@ -208,6 +214,36 @@ export default function SubmitPage() {
     };
   }, [language]);
 
+  useEffect(() => {
+    if (!isCreatingBottle || !newBottleName.trim() || !bottles.length) return;
+
+    const normalizedQuery = normalizeBottleLookupText(newBottleName);
+    const match =
+      bottles.find((bottle) => normalizeBottleLookupText(bottle.name) === normalizedQuery) ??
+      bottles.find((bottle) =>
+        normalizeBottleLookupText(`${bottle.brand} ${bottle.name}`).includes(normalizedQuery),
+      ) ??
+      bottles.find((bottle) => normalizeBottleLookupText(bottle.name).includes(normalizedQuery)) ??
+      null;
+
+    if (!match) {
+      setAutofillStatus("");
+      return;
+    }
+
+    setNewBottleCategory(match.category);
+    setNewBottleBrand((current) => current.trim() || match.brand || current);
+    setNewBottleAbv((current) => current.trim() || (match.abv ? String(match.abv) : current));
+    setNewBottleVolumeMl((current) =>
+      current.trim() && current !== "750" ? current : String(match.volumeMl || 750),
+    );
+    setAutofillStatus(
+      language === "kr"
+        ? `${match.name} 기준으로 브랜드, 카테고리, ABV, 용량을 채웠습니다.`
+        : `Filled brand, category, ABV, and volume from ${match.name}.`,
+    );
+  }, [bottles, isCreatingBottle, language, newBottleName]);
+
   if (!isBackendConfigured) {
     return (
       <div className="space-y-6">
@@ -249,6 +285,36 @@ export default function SubmitPage() {
     }
 
     return `${trimmedBatch} · ${trimmedLabelVersion}`;
+  };
+
+  const findBottleAutofillMatch = (query: string, sourceBottles: Bottle[] = bottles) => {
+    const normalizedQuery = normalizeBottleLookupText(query);
+    if (!normalizedQuery) return null;
+
+    return (
+      sourceBottles.find((bottle) => normalizeBottleLookupText(bottle.name) === normalizedQuery) ??
+      sourceBottles.find((bottle) =>
+        normalizeBottleLookupText(`${bottle.brand} ${bottle.name}`).includes(normalizedQuery),
+      ) ??
+      sourceBottles.find((bottle) => normalizeBottleLookupText(bottle.name).includes(normalizedQuery)) ??
+      null
+    );
+  };
+
+  const applyBottleAutofill = (match: Bottle | null) => {
+    if (!match) return;
+
+    setNewBottleCategory(match.category);
+    setNewBottleBrand((current) => current.trim() || match.brand || current);
+    setNewBottleAbv((current) => current.trim() || (match.abv ? String(match.abv) : current));
+    setNewBottleVolumeMl((current) =>
+      current.trim() && current !== "750" ? current : String(match.volumeMl || 750),
+    );
+    setAutofillStatus(
+      language === "kr"
+        ? `${match.name} 기준으로 브랜드, 카테고리, ABV, 용량을 채웠습니다.`
+        : `Filled brand, category, ABV, and volume from ${match.name}.`,
+    );
   };
 
   const findMatchingBottleVariant = (
@@ -307,7 +373,59 @@ export default function SubmitPage() {
       return;
     }
 
+    const exactQueryMatch = bottles.find(
+      (bottle) => normalizeBottleLookupText(bottle.name) === normalizeBottleLookupText(bottleQuery),
+    );
+    const currentBottle = selectedBottle ?? exactQueryMatch ?? null;
+
+    if (!currentBottle && !isCreatingBottle && pendingBottleName) {
+      setIsCreatingBottle(true);
+      setNewBottleName(sanitizeEnglishBottleText(pendingBottleName));
+      applyBottleAutofill(findBottleAutofillMatch(pendingBottleName));
+      setError(
+        language === "kr"
+          ? "새 바틀 정보를 확인해주세요. 브랜드, ABV, 용량은 필수입니다."
+          : "Review the new bottle details. Brand, ABV, and volume are required.",
+      );
+      return;
+    }
+
+    if (isCreatingBottle || (!currentBottle && pendingBottleName)) {
+      const missingFields = new Set<string>();
+      if (!newBottleBrand.trim()) missingFields.add("brand");
+      if (!Number(newBottleAbv || 0)) missingFields.add("abv");
+      if (!Number(newBottleVolumeMl || 0)) missingFields.add("volume");
+
+      if (missingFields.size) {
+        setInvalidBottleFields(missingFields);
+        setError(
+          language === "kr"
+            ? "브랜드, ABV, 용량을 모두 입력해야 등록할 수 있습니다."
+            : "Brand, ABV, and volume are required before publishing.",
+        );
+        window.setTimeout(() => {
+          const firstField = missingFields.has("brand")
+            ? fieldIds.newBrand
+            : missingFields.has("abv")
+              ? fieldIds.newAbv
+              : fieldIds.newVolume;
+          document.getElementById(firstField)?.focus();
+        }, 0);
+        return;
+      }
+    }
+
+    if (currentBottle && (!currentBottle.brand.trim() || !currentBottle.abv || !currentBottle.volumeMl)) {
+      setError(
+        language === "kr"
+          ? "선택한 바틀에 브랜드, ABV, 용량 정보가 부족합니다. 새 바틀로 등록 정보를 보완해주세요."
+          : "The selected bottle is missing brand, ABV, or volume. Create a complete bottle entry instead.",
+      );
+      return;
+    }
+
     setError("");
+    setInvalidBottleFields(new Set());
     setMessage("");
     setRedirectHref("");
     setIsSubmitting(true);
@@ -605,11 +723,15 @@ export default function SubmitPage() {
                 setSelectedBottle(bottle);
                 setBottleQuery(bottle.name);
                 setIsCreatingBottle(false);
+                setAutofillStatus("");
               }}
               query={bottleQuery}
               onQueryChange={(query) => {
                 setBottleQuery(query);
-                setSelectedBottle(null);
+                const exactMatch = bottles.find(
+                  (bottle) => normalizeBottleLookupText(bottle.name) === normalizeBottleLookupText(query),
+                );
+                setSelectedBottle(exactMatch ?? null);
               }}
               emptyAction={
                 bottleQuery.trim() ? (
@@ -618,8 +740,11 @@ export default function SubmitPage() {
                     disabled={bottlesLoading}
                     onClick={() => {
                       setIsCreatingBottle(true);
-                      setNewBottleName(sanitizeEnglishBottleText(bottleQuery.trim()));
+                      const nextName = sanitizeEnglishBottleText(bottleQuery.trim());
+                      setNewBottleName(nextName);
                       setNewBottleBrand("");
+                      setInvalidBottleFields(new Set());
+                      applyBottleAutofill(findBottleAutofillMatch(nextName));
                     }}
                     className="button-secondary px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -648,7 +773,11 @@ export default function SubmitPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setIsCreatingBottle(false)}
+                  onClick={() => {
+                    setIsCreatingBottle(false);
+                    setInvalidBottleFields(new Set());
+                    setAutofillStatus("");
+                  }}
                   className="text-sm font-medium text-neutral-500"
                 >
                   {language === "kr" ? "취소" : "Cancel"}
@@ -667,7 +796,9 @@ export default function SubmitPage() {
                     className="field w-full"
                   >
                     {CATEGORIES.map((option) => (
-                      <option key={option}>{tCategory(language, option)}</option>
+                      <option key={option} value={option}>
+                        {tCategory(language, option)}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -678,9 +809,10 @@ export default function SubmitPage() {
                   <input
                     id={fieldIds.newName}
                     value={newBottleName}
-                    onChange={(event) =>
-                      setNewBottleName(sanitizeEnglishBottleText(event.target.value))
-                    }
+                    onChange={(event) => {
+                      setNewBottleName(sanitizeEnglishBottleText(event.target.value));
+                      setInvalidBottleFields(new Set());
+                    }}
                     className="field w-full"
                     placeholder="Elijah Craig Barrel Proof C923"
                     inputMode="text"
@@ -699,10 +831,15 @@ export default function SubmitPage() {
                   <input
                     id={fieldIds.newBrand}
                     value={newBottleBrand}
-                    onChange={(event) =>
-                      setNewBottleBrand(sanitizeEnglishBottleText(event.target.value))
-                    }
-                    className="field w-full"
+                    onChange={(event) => {
+                      setNewBottleBrand(sanitizeEnglishBottleText(event.target.value));
+                      setInvalidBottleFields((current) => {
+                        const next = new Set(current);
+                        next.delete("brand");
+                        return next;
+                      });
+                    }}
+                    className={`field w-full ${invalidBottleFields.has("brand") ? "field-invalid" : ""}`}
                     placeholder="Heaven Hill"
                     inputMode="text"
                     autoCapitalize="words"
@@ -747,8 +884,15 @@ export default function SubmitPage() {
                     min="0"
                     step="0.1"
                     value={newBottleAbv}
-                    onChange={(event) => setNewBottleAbv(event.target.value)}
-                    className="field w-full"
+                    onChange={(event) => {
+                      setNewBottleAbv(event.target.value);
+                      setInvalidBottleFields((current) => {
+                        const next = new Set(current);
+                        next.delete("abv");
+                        return next;
+                      });
+                    }}
+                    className={`field w-full ${invalidBottleFields.has("abv") ? "field-invalid" : ""}`}
                     placeholder="62.5"
                   />
                 </div>
@@ -759,8 +903,15 @@ export default function SubmitPage() {
                   <select
                     id={fieldIds.newVolume}
                     value={newBottleVolumeMl}
-                    onChange={(event) => setNewBottleVolumeMl(event.target.value)}
-                    className="field w-full"
+                    onChange={(event) => {
+                      setNewBottleVolumeMl(event.target.value);
+                      setInvalidBottleFields((current) => {
+                        const next = new Set(current);
+                        next.delete("volume");
+                        return next;
+                      });
+                    }}
+                    className={`field w-full ${invalidBottleFields.has("volume") ? "field-invalid" : ""}`}
                   >
                     {BOTTLE_VOLUME_OPTIONS.map((option) => (
                       <option key={option} value={option}>
@@ -775,6 +926,7 @@ export default function SubmitPage() {
                   ? "Bottle name과 Brand는 영어로만 입력할 수 있습니다."
                   : "Bottle name and Brand must be entered in English only."}
               </p>
+              {autofillStatus ? <p className="text-xs leading-5 text-emerald-700">{autofillStatus}</p> : null}
             </div>
           ) : null}
 
@@ -863,7 +1015,9 @@ export default function SubmitPage() {
                 className="field w-full"
               >
                 {LISTING_CONDITIONS.map((option) => (
-                  <option key={option}>{tCondition(language, option)}</option>
+                  <option key={option} value={option}>
+                    {tCondition(language, option)}
+                  </option>
                 ))}
               </select>
             </div>
