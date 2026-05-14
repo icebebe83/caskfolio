@@ -75,7 +75,7 @@ export async function fetchNewsEntries(page = 1, pageSize = NEWS_PAGE_SIZE): Pro
       .order("published_at", { ascending: false })
       .range(from, to);
 
-    if (!error) {
+    if (!error && data?.length) {
       return {
         entries: sortCurated((data ?? []).map((row) => mapNewsRow(row))),
         total: count ?? data?.length ?? 0,

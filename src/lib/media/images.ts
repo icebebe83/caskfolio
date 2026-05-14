@@ -222,6 +222,13 @@ export async function uploadHomepageHeroImage(
   });
 }
 
+export async function uploadNewsThumbnailImage(newsId: string, file: File): Promise<string> {
+  const thumbnailBlob = await createJpegVariant(file, PREVIEW_THUMBNAIL_WIDTH);
+  return uploadBlob(`news/${newsId}/thumbnail.jpg`, thumbnailBlob, "image/jpeg", {
+    upsert: true,
+  });
+}
+
 export async function uploadListingOriginalImages(
   listingId: string,
   files: File[],

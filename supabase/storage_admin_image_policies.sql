@@ -1,6 +1,7 @@
 -- Admin image upload policies for Supabase Storage.
--- Run this in the Supabase SQL Editor when Admin bottle master image or
--- homepage banner uploads fail with "new row violates row-level security policy".
+-- Run this in the Supabase SQL Editor when Admin bottle master image,
+-- homepage banner, or news thumbnail uploads fail with
+-- "new row violates row-level security policy".
 
 drop policy if exists "admin_image_select_caskindex_images" on storage.objects;
 create policy "admin_image_select_caskindex_images"
@@ -10,7 +11,7 @@ to authenticated
 using (
   bucket_id = 'caskindex-images'
   and public.is_admin()
-  and (storage.foldername(name))[1] in ('bottles', 'site-content')
+  and (storage.foldername(name))[1] in ('bottles', 'site-content', 'news')
 );
 
 drop policy if exists "admin_image_upload_caskindex_images" on storage.objects;
@@ -21,7 +22,7 @@ to authenticated
 with check (
   bucket_id = 'caskindex-images'
   and public.is_admin()
-  and (storage.foldername(name))[1] in ('bottles', 'site-content')
+  and (storage.foldername(name))[1] in ('bottles', 'site-content', 'news')
 );
 
 drop policy if exists "admin_image_update_caskindex_images" on storage.objects;
@@ -32,12 +33,12 @@ to authenticated
 using (
   bucket_id = 'caskindex-images'
   and public.is_admin()
-  and (storage.foldername(name))[1] in ('bottles', 'site-content')
+  and (storage.foldername(name))[1] in ('bottles', 'site-content', 'news')
 )
 with check (
   bucket_id = 'caskindex-images'
   and public.is_admin()
-  and (storage.foldername(name))[1] in ('bottles', 'site-content')
+  and (storage.foldername(name))[1] in ('bottles', 'site-content', 'news')
 );
 
 drop policy if exists "admin_image_delete_caskindex_images" on storage.objects;
@@ -48,5 +49,5 @@ to authenticated
 using (
   bucket_id = 'caskindex-images'
   and public.is_admin()
-  and (storage.foldername(name))[1] in ('bottles', 'site-content')
+  and (storage.foldername(name))[1] in ('bottles', 'site-content', 'news')
 );

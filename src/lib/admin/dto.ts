@@ -67,6 +67,7 @@ export type AdminBottleDraft = {
   volumeMl: string;
   aliases: string;
   hotBottle: boolean;
+  imageUrl: string;
 };
 
 export type AdminReferenceDraft = {
@@ -165,6 +166,7 @@ export function createEmptyBottleDraft(): AdminBottleDraft {
     volumeMl: "750",
     aliases: "",
     hotBottle: false,
+    imageUrl: "",
   };
 }
 
@@ -178,6 +180,7 @@ export function createBottleDraft(bottle: Bottle): AdminBottleDraft {
     volumeMl: String(bottle.volumeMl || 750),
     aliases: bottle.aliases.join(", "),
     hotBottle: Boolean(bottle.hotBottle),
+    imageUrl: bottle.imageUrl || bottle.masterPreviewImageUrl || bottle.masterImageUrl || "",
   };
 }
 

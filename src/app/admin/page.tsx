@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 
 import { DemoBanner } from "@/components/demo-banner";
@@ -30,6 +30,7 @@ import {
 } from "@/lib/admin/dto";
 import { formatDate } from "@/lib/format";
 import { isBackendConfigured } from "@/lib/backend/client";
+import { uploadNewsThumbnailImage } from "@/lib/media/images";
 import {
   checkAdmin,
   createManualNews,
@@ -53,6 +54,7 @@ import {
   syncLocalHomepageBannersToRemote,
   updateBottle,
   updateBottleHotFlag,
+  updateBottleImageUrl,
   updateBottleMasterImage,
   updateListingStatus,
   updateNewsImageUrl,
@@ -79,6 +81,28 @@ import type { AdminDashboardMetrics, AdminProfileSummary, HomepageBanner, Spirit
 
 const DEV_ADMIN_ACTION_HOSTS = new Set(["localhost", "127.0.0.1", "172.20.40.66"]);
 
+function inferReferenceSourceFromUrl(sourceUrl: string): string {
+  const trimmedUrl = sourceUrl.trim();
+  if (!trimmedUrl) return "";
+
+  try {
+    const { hostname } = new URL(trimmedUrl);
+    const normalizedHost = hostname.replace(/^www\./i, "").toLowerCase();
+    if (normalizedHost.includes("wine-searcher")) return "Wine-Searcher";
+    if (normalizedHost.includes("spiritradar")) return "SpiritRadar";
+    if (normalizedHost.includes("whiskyfindr")) return "WhiskyFindr";
+
+    return normalizedHost
+      .split(".")[0]
+      .split(/[-_]/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  } catch {
+    return "";
+  }
+}
+
 export default function AdminPage() {
   const { user, loading: authLoading } = useAuth();
   const [isAdmin, setIsAdmin] = useState(false);
@@ -104,7 +128,11 @@ export default function AdminPage() {
   const [serverStatus, setServerStatus] = useState<AdminServerStatus>(EMPTY_SERVER_STATUS);
   const [isPending, startTransition] = useTransition();
   const [manualNews, setManualNews] = useState<AdminManualNewsDraft>(createEmptyManualNewsDraft);
+  const [manualNewsImageFile, setManualNewsImageFile] = useState<File | null>(null);
   const [newsImageDrafts, setNewsImageDrafts] = useState<Record<string, string>>({});
+  const [newsImageFiles, setNewsImageFiles] = useState<Record<string, File | null>>({});
+  const [applyingNewsImageId, setApplyingNewsImageId] = useState("");
+  const newsImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [adminServerActionsEnabled, setAdminServerActionsEnabled] = useState(false);
   const newsImportActionsEnabled = true;
 
@@ -318,6 +346,15 @@ export default function AdminPage() {
         await updateBottleMasterImage(selectedBottleId, masterImageFile);
         setMasterImageFile(null);
       }
+      const nextImageUrl = bottleDraft.imageUrl.trim();
+      if (
+        nextImageUrl &&
+        selectedBottle &&
+        nextImageUrl !== selectedBottle.masterImageUrl &&
+        nextImageUrl !== selectedBottle.masterPreviewImageUrl
+      ) {
+        await updateBottleImageUrl(selectedBottleId, nextImageUrl);
+      }
     }, "Bottle updated.");
   };
 
@@ -373,8 +410,16 @@ export default function AdminPage() {
   const onCreateManualNews = () => {
     withAction(
       async () => {
-        await createManualNews(manualNews);
+        const nextManualNews = { ...manualNews };
+        if (manualNewsImageFile) {
+          nextManualNews.imageUrl = await uploadNewsThumbnailImage(
+            `manual-${Date.now()}`,
+            manualNewsImageFile,
+          );
+        }
+        await createManualNews(nextManualNews);
         setManualNews(createEmptyManualNewsDraft());
+        setManualNewsImageFile(null);
       },
       "Manual news added.",
     );
@@ -459,7 +504,23 @@ export default function AdminPage() {
 
   const onNewsImageUpdate = (newsId: string) => {
     withAction(
-      () => updateNewsImageUrl(newsId, newsImageDrafts[newsId] ?? ""),
+      async () => {
+        setApplyingNewsImageId(newsId);
+        try {
+          let nextImageUrl = newsImageDrafts[newsId] ?? "";
+          const nextImageInput = newsImageInputRefs.current[newsId];
+          const nextImageFile = nextImageInput?.files?.[0] ?? newsImageFiles[newsId] ?? null;
+          if (nextImageFile) {
+            nextImageUrl = await uploadNewsThumbnailImage(newsId, nextImageFile);
+            if (nextImageInput) nextImageInput.value = "";
+            setNewsImageFiles((current) => ({ ...current, [newsId]: null }));
+            setNewsImageDrafts((current) => ({ ...current, [newsId]: nextImageUrl }));
+          }
+          await updateNewsImageUrl(newsId, nextImageUrl);
+        } finally {
+          setApplyingNewsImageId("");
+        }
+      },
       "News thumbnail updated.",
     );
   };
@@ -810,6 +871,17 @@ export default function AdminPage() {
           <input value={manualNews.source} onChange={(event) => setManualNews((current) => ({ ...current, source: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="Source" />
           <input value={manualNews.url} onChange={(event) => setManualNews((current) => ({ ...current, url: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="URL" />
           <input value={manualNews.imageUrl} onChange={(event) => setManualNews((current) => ({ ...current, imageUrl: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="Image URL (optional)" />
+          <div>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(event) => setManualNewsImageFile(event.target.files?.[0] ?? null)}
+              className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm"
+            />
+            <p className="mt-2 text-xs leading-5 text-ink/45">
+              Optional. Use this when Instagram does not expose a thumbnail.
+            </p>
+          </div>
           <select value={manualNews.priority} onChange={(event) => setManualNews((current) => ({ ...current, priority: event.target.value as "high" | "medium" | "low" }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm">
             <option value="high">High priority</option>
             <option value="medium">Medium priority</option>
@@ -836,7 +908,7 @@ export default function AdminPage() {
                 <p className="mt-1 text-xs uppercase tracking-[0.18em] text-ink/45">
                   {item.source} · {formatDate(item.publishedAt)} · {item.type}
                 </p>
-                <div className="mt-3 grid gap-2 sm:grid-cols-[72px_1fr_auto] sm:items-center">
+                <div className="mt-3 grid gap-2 sm:grid-cols-[72px_1fr] sm:items-start">
                   <div className="aspect-[1.15] overflow-hidden rounded-xl border border-ink/10 bg-[#f3f2ee]">
                     {item.imageUrl ? (
                       <img
@@ -849,24 +921,46 @@ export default function AdminPage() {
                       />
                     ) : null}
                   </div>
-                  <input
-                    value={newsImageDrafts[item.id] ?? ""}
-                    onChange={(event) =>
-                      setNewsImageDrafts((current) => ({
-                        ...current,
-                        [item.id]: event.target.value,
-                      }))
-                    }
-                    className="w-full rounded-full border border-ink/10 bg-white px-3 py-2 text-xs"
-                    placeholder="Image URL"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => onNewsImageUpdate(item.id)}
-                    className="rounded-full border border-ink/10 px-3 py-2 text-xs font-medium text-ink"
-                  >
-                    Save image
-                  </button>
+                  <div className="space-y-2">
+                    <input
+                      value={newsImageDrafts[item.id] ?? ""}
+                      onChange={(event) =>
+                        setNewsImageDrafts((current) => ({
+                          ...current,
+                          [item.id]: event.target.value,
+                        }))
+                      }
+                      className="w-full rounded-full border border-ink/10 bg-white px-3 py-2 text-xs"
+                      placeholder="Image URL"
+                    />
+                    <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        ref={(element) => {
+                          newsImageInputRefs.current[item.id] = element;
+                        }}
+                        onChange={(event) =>
+                          setNewsImageFiles((current) => ({
+                            ...current,
+                            [item.id]: event.target.files?.[0] ?? null,
+                          }))
+                        }
+                        className="w-full rounded-full border border-ink/10 bg-white px-3 py-2 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onNewsImageUpdate(item.id)}
+                        disabled={applyingNewsImageId === item.id}
+                        className="rounded-full border border-ink/10 px-3 py-2 text-xs font-medium text-ink transition hover:border-ink/30 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {applyingNewsImageId === item.id ? "Applying..." : "Apply image"}
+                      </button>
+                    </div>
+                    <p className="text-[11px] leading-4 text-ink/45">
+                      Choose a file or paste an Image URL, then apply.
+                    </p>
+                  </div>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -895,8 +989,8 @@ export default function AdminPage() {
   );
 
   const renderBottles = () => (
-    <div className="grid gap-8 lg:grid-cols-[1.12fr_0.88fr]">
-      <div className="panel overflow-hidden">
+    <div className="grid items-start gap-8 lg:grid-cols-[1.12fr_0.88fr]">
+      <div className="panel overflow-hidden lg:max-h-[76vh] lg:overflow-y-auto">
         <div className="border-b border-ink/8 px-6 py-4">
           <p className="text-xs uppercase tracking-[0.24em] text-cask">Bottles</p>
           <h2 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-semibold text-ink">
@@ -1047,6 +1141,19 @@ export default function AdminPage() {
               </p>
             </div>
 
+            <div>
+              <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-ink/45">Image URL</label>
+              <input
+                value={bottleDraft.imageUrl}
+                onChange={(event) => setBottleDraft((current) => ({ ...current, imageUrl: event.target.value }))}
+                className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm"
+                placeholder="https://example.com/bottle.jpg"
+              />
+              <p className="mt-2 text-xs text-ink/45">
+                Optional. Use this when adding a bottle image by URL instead of uploading a file.
+              </p>
+            </div>
+
             <div className="rounded-2xl border border-ink/8 bg-[#faf8f4] px-4 py-3 text-xs uppercase tracking-[0.16em] text-ink/45">
               Updated {formatDate(selectedBottle.updatedAt)}
             </div>
@@ -1107,9 +1214,15 @@ export default function AdminPage() {
                   <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-ink/45">Source URL</label>
                   <input
                     value={referenceDraft.sourceUrl}
-                    onChange={(event) =>
-                      setReferenceDraft((current) => ({ ...current, sourceUrl: event.target.value }))
-                    }
+                    onChange={(event) => {
+                      const nextSourceUrl = event.target.value;
+                      const inferredSource = inferReferenceSourceFromUrl(nextSourceUrl);
+                      setReferenceDraft((current) => ({
+                        ...current,
+                        sourceUrl: nextSourceUrl,
+                        source: inferredSource || current.source,
+                      }));
+                    }}
                     className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm"
                     placeholder="https://..."
                   />

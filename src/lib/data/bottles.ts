@@ -440,6 +440,31 @@ export async function updateBottleMasterImage(
   });
 }
 
+export async function updateBottleImageUrl(bottleId: string, imageUrl: string): Promise<void> {
+  assertSupabaseConfigured();
+  const nextImageUrl = imageUrl.trim();
+  if (!/^https?:\/\//i.test(nextImageUrl)) {
+    throw new Error("Bottle image URL must start with http:// or https://.");
+  }
+
+  const { error } = await supabase!
+    .from("bottles")
+    .update({
+      master_image_url: nextImageUrl,
+      master_preview_image_url: nextImageUrl,
+      image_url: nextImageUrl,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", bottleId);
+  if (error) throw toSupabaseError(error, "Unable to update bottle image URL.");
+  await appendAuditLog({
+    action: "bottle.image_url_updated",
+    targetType: "bottle",
+    targetId: bottleId,
+    details: { imageUrl: nextImageUrl },
+  });
+}
+
 export async function deleteBottle(bottleId: string): Promise<void> {
   assertSupabaseConfigured();
   const { error } = await supabase!.from("bottles").delete().eq("id", bottleId);
