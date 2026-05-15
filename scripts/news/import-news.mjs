@@ -28,6 +28,7 @@ const YOUTUBE_SOURCES = [
 
 const OUTPUT_PATH = path.join(process.cwd(), "public", "news.json");
 const FALLBACK_IMAGE = getNewsFallbackImage();
+const STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "caskindex-images";
 const PRIORITY_RANK = { high: 3, medium: 2, low: 1 };
 const ALLOWED_SOURCES = new Set([...SOURCES, ...YOUTUBE_SOURCES].map((item) => item.source));
 const VIDEO_SOURCE_NAMES = new Set(YOUTUBE_SOURCES.map((item) => item.source));
@@ -578,6 +579,28 @@ function isMissingTypeColumn(error) {
   return /column .*type.* does not exist/i.test(message) || /schema cache/i.test(message);
 }
 
+function inferImageExtension(contentType = "", imageUrl = "") {
+  if (contentType.includes("png") || /\.png($|\?)/i.test(imageUrl)) return "png";
+  if (contentType.includes("webp") || /\.webp($|\?)/i.test(imageUrl)) return "webp";
+  if (contentType.includes("gif") || /\.gif($|\?)/i.test(imageUrl)) return "gif";
+  return "jpg";
+}
+
+async function uploadNewsImageBuffer(supabase, storagePath, buffer, contentType = "image/jpeg") {
+  const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(storagePath, buffer, {
+    contentType,
+    upsert: true,
+    cacheControl: "31536000",
+  });
+
+  if (error) {
+    throw new Error(error.message || "thumbnail upload failed");
+  }
+
+  const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(storagePath);
+  return data?.publicUrl || "";
+}
+
 async function saveArticle(supabase, article) {
   const payload = {
     id: makeDocId(article.url),
@@ -621,6 +644,65 @@ async function saveArticle(supabase, article) {
       ? firstAttempt.error.message
       : String(firstAttempt.error?.message ?? "unknown error");
   throw new Error(`Unable to save news article: ${article.title} (${message})`);
+}
+
+async function uploadLocalNewsThumbnail(supabase, imageUrl) {
+  if (!imageUrl?.startsWith("/news-thumbs/")) {
+    return imageUrl || FALLBACK_IMAGE;
+  }
+
+  const fileName = path.basename(imageUrl);
+  const filePath = path.join(process.cwd(), "public", "news-thumbs", fileName);
+  const storagePath = `news/imported/${fileName}`;
+
+  try {
+    const publicUrl = await uploadNewsImageBuffer(supabase, storagePath, await fs.readFile(filePath));
+    return publicUrl || imageUrl;
+  } catch (error) {
+    console.warn(
+      `[news-import] thumbnail file unavailable ${fileName}: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`,
+    );
+    return imageUrl;
+  }
+}
+
+async function uploadRemoteNewsThumbnail(supabase, imageUrl, articleUrl) {
+  if (!imageUrl || imageUrl.startsWith("/")) {
+    return imageUrl || FALLBACK_IMAGE;
+  }
+
+  try {
+    const response = await fetch(imageUrl, {
+      headers: {
+        "user-agent": "Mozilla/5.0 Caskfolio News Image Cacher",
+        accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+      },
+    });
+
+    if (!response.ok) {
+      return imageUrl;
+    }
+
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    if (!contentType.startsWith("image/")) {
+      return imageUrl;
+    }
+
+    const extension = inferImageExtension(contentType, imageUrl);
+    const storagePath = `news/imported/${makeDocId(articleUrl || imageUrl)}.${extension}`;
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const publicUrl = await uploadNewsImageBuffer(supabase, storagePath, buffer, contentType);
+    return publicUrl || imageUrl;
+  } catch (error) {
+    console.warn(
+      `[news-import] remote thumbnail upload skipped: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`,
+    );
+    return imageUrl;
+  }
 }
 
 function sortCuratedArticles(articles) {
@@ -696,9 +778,12 @@ export async function runNewsImport(options = {}) {
     const extracted = await extractArticleDetails(article);
     article.summary = extracted.summary || article.summary;
     const sourceImageUrl = extracted.imageUrl || article.imageUrl || FALLBACK_IMAGE;
-    article.imageUrl = useLocalThumbnails
-      ? await createNewsThumbnail(sourceImageUrl)
-      : sourceImageUrl;
+    if (useLocalThumbnails) {
+      article.imageUrl = await createNewsThumbnail(sourceImageUrl);
+      article.imageUrl = await uploadLocalNewsThumbnail(supabase, article.imageUrl);
+    } else {
+      article.imageUrl = await uploadRemoteNewsThumbnail(supabase, sourceImageUrl, article.url);
+    }
     await saveArticle(supabase, article);
   }
 

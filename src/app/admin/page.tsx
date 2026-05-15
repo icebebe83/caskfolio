@@ -30,7 +30,7 @@ import {
 } from "@/lib/admin/dto";
 import { formatDate } from "@/lib/format";
 import { isBackendConfigured } from "@/lib/backend/client";
-import { uploadNewsThumbnailImage } from "@/lib/media/images";
+import { isDefaultRegisterBottleImage, uploadNewsThumbnailImage } from "@/lib/media/images";
 import {
   checkAdmin,
   createManualNews,
@@ -46,6 +46,7 @@ import {
   fetchAdminUsers,
   fetchBottles,
   fetchBottleReferencePrice,
+  fetchBottleReferencePrices,
   fetchHomepageBanners,
   fetchReports,
   reorderHomepageBanners,
@@ -77,9 +78,16 @@ import type {
   AdminSection,
   AdminServerStatus,
 } from "@/lib/admin/dto";
-import type { AdminDashboardMetrics, AdminProfileSummary, HomepageBanner, SpiritCategory } from "@/lib/types";
+import type {
+  AdminDashboardMetrics,
+  AdminProfileSummary,
+  BottleReferencePrice,
+  HomepageBanner,
+  SpiritCategory,
+} from "@/lib/types";
 
 const DEV_ADMIN_ACTION_HOSTS = new Set(["localhost", "127.0.0.1", "172.20.40.66"]);
+type AdminBottleFilter = "all" | "missing-reference" | "missing-image" | "missing-any";
 
 function inferReferenceSourceFromUrl(sourceUrl: string): string {
   const trimmedUrl = sourceUrl.trim();
@@ -103,18 +111,30 @@ function inferReferenceSourceFromUrl(sourceUrl: string): string {
   }
 }
 
+function bottleHasAdminImage(bottle: Bottle): boolean {
+  const imageCandidates = [
+    bottle.masterImageUrl,
+    bottle.masterPreviewImageUrl,
+    bottle.imageUrl,
+  ].filter(Boolean);
+  return imageCandidates.some((imageUrl) => !isDefaultRegisterBottleImage(imageUrl));
+}
+
 export default function AdminPage() {
   const { user, loading: authLoading } = useAuth();
   const [isAdmin, setIsAdmin] = useState(false);
   const [activeSection, setActiveSection] = useState<AdminSection>("Dashboard");
   const [metrics, setMetrics] = useState<AdminDashboardMetrics>(EMPTY_METRICS);
   const [bottles, setBottles] = useState<Bottle[]>([]);
+  const [bottleReferences, setBottleReferences] = useState<BottleReferencePrice[]>([]);
   const [listings, setListings] = useState<Listing[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [newsItems, setNewsItems] = useState<AdminNewsItem[]>([]);
   const [users, setUsers] = useState<AdminProfileSummary[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [selectedBottleId, setSelectedBottleId] = useState("");
+  const [bottleSearchQuery, setBottleSearchQuery] = useState("");
+  const [bottleFilter, setBottleFilter] = useState<AdminBottleFilter>("all");
   const [bottleDraft, setBottleDraft] = useState<AdminBottleDraft>(createEmptyBottleDraft);
   const [referenceDraft, setReferenceDraft] = useState<AdminReferenceDraft>(createEmptyReferenceDraft);
   const [masterImageFile, setMasterImageFile] = useState<File | null>(null);
@@ -144,11 +164,22 @@ export default function AdminPage() {
   }, []);
 
   const loadAdminData = async () => {
-    const [metricsData, listingDocs, reportDocs, bottleDocs, newsDocs, userDocs, heroBannerData, auditLogData] = await Promise.all([
+    const [
+      metricsData,
+      listingDocs,
+      reportDocs,
+      bottleDocs,
+      referenceDocs,
+      newsDocs,
+      userDocs,
+      heroBannerData,
+      auditLogData,
+    ] = await Promise.all([
       fetchAdminMetrics(),
       fetchAdminListings(),
       fetchReports(),
       fetchBottles(),
+      fetchBottleReferencePrices(),
       fetchAdminNews(),
       fetchAdminUsers(),
       fetchHomepageBanners(),
@@ -158,6 +189,7 @@ export default function AdminPage() {
     setListings(listingDocs);
     setReports(reportDocs);
     setBottles(bottleDocs);
+    setBottleReferences(referenceDocs);
     setNewsItems(newsDocs);
     setNewsImageDrafts(Object.fromEntries(newsDocs.map((item) => [item.id, item.imageUrl])));
     setUsers(userDocs);
@@ -253,6 +285,41 @@ export default function AdminPage() {
 
   const bottleMap = useMemo(() => new Map(bottles.map((bottle) => [bottle.id, bottle])), [bottles]);
   const listingMap = useMemo(() => new Map(listings.map((listing) => [listing.id, listing])), [listings]);
+  const bottleReferenceMap = useMemo(() => {
+    const references = new Map<string, BottleReferencePrice>();
+    bottleReferences.forEach((reference) => {
+      if (!references.has(reference.bottleId)) {
+        references.set(reference.bottleId, reference);
+      }
+    });
+    return references;
+  }, [bottleReferences]);
+  const filteredBottles = useMemo(() => {
+    const query = bottleSearchQuery.trim().toLowerCase();
+    return bottles.filter((bottle) => {
+      const hasReference = bottleReferenceMap.has(bottle.id);
+      const hasImage = bottleHasAdminImage(bottle);
+      const matchesQuery =
+        !query ||
+        [bottle.name, bottle.brand, bottle.category, bottle.batch, bottle.aliases.join(" ")]
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+      if (!matchesQuery) return false;
+      if (bottleFilter === "missing-reference") return !hasReference;
+      if (bottleFilter === "missing-image") return !hasImage;
+      if (bottleFilter === "missing-any") return !hasReference || !hasImage;
+      return true;
+    });
+  }, [bottleFilter, bottleReferenceMap, bottleSearchQuery, bottles]);
+  const missingReferenceCount = useMemo(
+    () => bottles.filter((bottle) => !bottleReferenceMap.has(bottle.id)).length,
+    [bottleReferenceMap, bottles],
+  );
+  const missingImageCount = useMemo(
+    () => bottles.filter((bottle) => !bottleHasAdminImage(bottle)).length,
+    [bottles],
+  );
   const selectedBottle = bottles.find((bottle) => bottle.id === selectedBottleId) ?? null;
 
   if (!isBackendConfigured) {
@@ -996,6 +1063,27 @@ export default function AdminPage() {
           <h2 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-semibold text-ink">
             Bottle library
           </h2>
+          <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
+            <input
+              value={bottleSearchQuery}
+              onChange={(event) => setBottleSearchQuery(event.target.value)}
+              className="w-full rounded-full border border-ink/10 bg-white px-4 py-2.5 text-sm"
+              placeholder="Search bottle, brand, batch, or alias"
+            />
+            <select
+              value={bottleFilter}
+              onChange={(event) => setBottleFilter(event.target.value as AdminBottleFilter)}
+              className="rounded-full border border-ink/10 bg-white px-4 py-2.5 text-sm font-medium text-ink"
+            >
+              <option value="all">All bottles</option>
+              <option value="missing-reference">Missing global price</option>
+              <option value="missing-image">Missing image</option>
+              <option value="missing-any">Missing global or image</option>
+            </select>
+          </div>
+          <p className="mt-3 text-xs uppercase tracking-[0.16em] text-ink/45">
+            Showing {filteredBottles.length} of {bottles.length} · Missing global {missingReferenceCount} · Missing image {missingImageCount}
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
@@ -1004,30 +1092,58 @@ export default function AdminPage() {
                 <th className="px-6 py-4 font-medium">Name</th>
                 <th className="px-6 py-4 font-medium">Brand</th>
                 <th className="px-6 py-4 font-medium">Category</th>
+                <th className="px-6 py-4 font-medium">Global</th>
+                <th className="px-6 py-4 font-medium">Image</th>
                 <th className="px-6 py-4 font-medium">Updated</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-ink/8">
-              {bottles.map((bottle) => (
-                <tr
-                  key={bottle.id}
-                  onClick={() => setSelectedBottleId(bottle.id)}
-                  className={`cursor-pointer transition-colors hover:bg-[#faf8f4] ${
-                    bottle.id === selectedBottleId ? "bg-[#f5f2ec]" : "bg-white"
-                  }`}
-                >
-                  <td className="px-6 py-4">
-                    <div className="font-medium text-ink">{bottle.name}</div>
-                  </td>
-                  <td className="px-6 py-4 text-ink/70">{bottle.brand || "—"}</td>
-                  <td className="px-6 py-4 text-ink/70">{bottle.category}</td>
-                  <td className="px-6 py-4 text-ink/55">{formatDate(bottle.updatedAt)}</td>
-                </tr>
-              ))}
-              {!bottles.length ? (
+              {filteredBottles.map((bottle) => {
+                const reference = bottleReferenceMap.get(bottle.id);
+                const hasImage = bottleHasAdminImage(bottle);
+                return (
+                  <tr
+                    key={bottle.id}
+                    onClick={() => setSelectedBottleId(bottle.id)}
+                    className={`cursor-pointer transition-colors hover:bg-[#faf8f4] ${
+                      bottle.id === selectedBottleId ? "bg-[#f5f2ec]" : "bg-white"
+                    }`}
+                  >
+                    <td className="px-6 py-4">
+                      <div className="font-medium text-ink">{bottle.name}</div>
+                    </td>
+                    <td className="px-6 py-4 text-ink/70">{bottle.brand || "—"}</td>
+                    <td className="px-6 py-4 text-ink/70">{bottle.category}</td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                          reference
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-red-50 text-red-700"
+                        }`}
+                      >
+                        {reference ? "Set" : "Missing"}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                          hasImage
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-red-50 text-red-700"
+                        }`}
+                      >
+                        {hasImage ? "Set" : "Missing"}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-ink/55">{formatDate(bottle.updatedAt)}</td>
+                  </tr>
+                );
+              })}
+              {!filteredBottles.length ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-8 text-center text-sm text-ink/60">
-                    No bottles available.
+                  <td colSpan={6} className="px-6 py-8 text-center text-sm text-ink/60">
+                    No bottles match the current filter.
                   </td>
                 </tr>
               ) : null}

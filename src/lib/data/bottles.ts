@@ -285,6 +285,25 @@ export async function fetchBottleReferencePrice(
   return null;
 }
 
+export async function fetchBottleReferencePrices(): Promise<BottleReferencePrice[]> {
+  assertSupabaseConfigured();
+  try {
+    const { data, error } = await supabase!
+      .from("bottle_reference_prices")
+      .select("*")
+      .order("updated_at", { ascending: false })
+      .limit(1000);
+
+    if (!error && Array.isArray(data)) {
+      return data.map((row) => mapBottleReferencePriceRow(row));
+    }
+  } catch {
+    return [];
+  }
+
+  return [];
+}
+
 export async function saveBottleReferencePrice(
   bottleId: string,
   input: {
