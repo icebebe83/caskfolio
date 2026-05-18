@@ -30,7 +30,11 @@ import {
 } from "@/lib/admin/dto";
 import { formatDate } from "@/lib/format";
 import { isBackendConfigured } from "@/lib/backend/client";
-import { isDefaultRegisterBottleImage, uploadNewsThumbnailImage } from "@/lib/media/images";
+import {
+  hasListingUploadedImage,
+  isDefaultRegisterBottleImage,
+  uploadNewsThumbnailImage,
+} from "@/lib/media/images";
 import {
   checkAdmin,
   createManualNews,
@@ -118,6 +122,15 @@ function bottleHasAdminImage(bottle: Bottle): boolean {
     bottle.imageUrl,
   ].filter(Boolean);
   return imageCandidates.some((imageUrl) => !isDefaultRegisterBottleImage(imageUrl));
+}
+
+function listingHasAdminImage(listing: Listing): boolean {
+  const imageCandidates = [
+    ...(listing.thumbnailImages ?? []),
+    ...(listing.originalImages ?? []),
+    listing.imageUrl,
+  ].filter(Boolean);
+  return hasListingUploadedImage(listing) || imageCandidates.some((imageUrl) => !isDefaultRegisterBottleImage(imageUrl));
 }
 
 export default function AdminPage() {
@@ -285,6 +298,16 @@ export default function AdminPage() {
 
   const bottleMap = useMemo(() => new Map(bottles.map((bottle) => [bottle.id, bottle])), [bottles]);
   const listingMap = useMemo(() => new Map(listings.map((listing) => [listing.id, listing])), [listings]);
+  const bottleListingImageMap = useMemo(() => {
+    const images = new Map<string, boolean>();
+    listings.forEach((listing) => {
+      if (images.get(listing.bottleId)) return;
+      if (listingHasAdminImage(listing)) {
+        images.set(listing.bottleId, true);
+      }
+    });
+    return images;
+  }, [listings]);
   const bottleReferenceMap = useMemo(() => {
     const references = new Map<string, BottleReferencePrice>();
     bottleReferences.forEach((reference) => {
@@ -294,11 +317,13 @@ export default function AdminPage() {
     });
     return references;
   }, [bottleReferences]);
+  const bottleHasAnyImage = (bottle: Bottle) =>
+    bottleHasAdminImage(bottle) || (bottleListingImageMap.get(bottle.id) ?? false);
   const filteredBottles = useMemo(() => {
     const query = bottleSearchQuery.trim().toLowerCase();
     return bottles.filter((bottle) => {
       const hasReference = bottleReferenceMap.has(bottle.id);
-      const hasImage = bottleHasAdminImage(bottle);
+      const hasImage = bottleHasAnyImage(bottle);
       const matchesQuery =
         !query ||
         [bottle.name, bottle.brand, bottle.category, bottle.batch, bottle.aliases.join(" ")]
@@ -311,14 +336,14 @@ export default function AdminPage() {
       if (bottleFilter === "missing-any") return !hasReference || !hasImage;
       return true;
     });
-  }, [bottleFilter, bottleReferenceMap, bottleSearchQuery, bottles]);
+  }, [bottleFilter, bottleReferenceMap, bottleSearchQuery, bottles, bottleListingImageMap]);
   const missingReferenceCount = useMemo(
     () => bottles.filter((bottle) => !bottleReferenceMap.has(bottle.id)).length,
     [bottleReferenceMap, bottles],
   );
   const missingImageCount = useMemo(
-    () => bottles.filter((bottle) => !bottleHasAdminImage(bottle)).length,
-    [bottles],
+    () => bottles.filter((bottle) => !bottleHasAnyImage(bottle)).length,
+    [bottles, bottleListingImageMap],
   );
   const selectedBottle = bottles.find((bottle) => bottle.id === selectedBottleId) ?? null;
 
@@ -1100,7 +1125,7 @@ export default function AdminPage() {
             <tbody className="divide-y divide-ink/8">
               {filteredBottles.map((bottle) => {
                 const reference = bottleReferenceMap.get(bottle.id);
-                const hasImage = bottleHasAdminImage(bottle);
+                const hasImage = bottleHasAnyImage(bottle);
                 return (
                   <tr
                     key={bottle.id}
