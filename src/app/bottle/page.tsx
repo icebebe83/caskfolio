@@ -14,16 +14,22 @@ import { resolveUsdKrwRate } from "@/lib/fx";
 import { formatCategoryLabel, formatKrw, formatListingStatus, formatUsd, median, toDate } from "@/lib/format";
 import { isBackendConfigured } from "@/lib/backend/client";
 import {
+  createCollectorNote,
   fetchAllListings,
   fetchBottleById,
   fetchBottleReferencePrice,
   fetchBottles,
+  fetchCollectorNotes,
   fetchListingsForBottleIds,
   fetchWishlistBottleIds,
+  findCollectorNoteQualifiedBottleId,
+  hideOwnCollectorNote,
+  markCollectorNoteHelpful,
   setBottleWishlist,
+  updateCollectorNoteContent,
 } from "@/lib/data/store";
 import { formatUiDate, tStatus } from "@/lib/i18n";
-import type { Bottle, BottleReferencePrice, Listing } from "@/lib/types";
+import type { Bottle, BottleReferencePrice, CollectorNote, Listing } from "@/lib/types";
 
 function formatPercentChange(value: number): string {
   if (!Number.isFinite(value)) return "0.0%";
@@ -44,9 +50,20 @@ function BottlePageContent() {
   const bottleId = searchParams.get("id") ?? "";
   const [bottle, setBottle] = useState<Bottle | null>(null);
   const [listings, setListings] = useState<Listing[]>([]);
+  const [equivalentBottleIds, setEquivalentBottleIds] = useState<string[]>([]);
   const [allListings, setAllListings] = useState<Listing[]>([]);
   const [allBottles, setAllBottles] = useState<Bottle[]>([]);
   const [referencePrice, setReferencePrice] = useState<BottleReferencePrice | null>(null);
+  const [collectorNotes, setCollectorNotes] = useState<CollectorNote[]>([]);
+  const [qualifiedNoteBottleId, setQualifiedNoteBottleId] = useState<string | null>(null);
+  const [noteModalOpen, setNoteModalOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [editingNoteId, setEditingNoteId] = useState("");
+  const [editingNoteDraft, setEditingNoteDraft] = useState("");
+  const [deleteNoteId, setDeleteNoteId] = useState("");
+  const [noteSubmitting, setNoteSubmitting] = useState(false);
+  const [noteUpdating, setNoteUpdating] = useState(false);
+  const [noteMessage, setNoteMessage] = useState("");
   const [fxRate, setFxRate] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -65,9 +82,11 @@ function BottlePageContent() {
     if (!isBackendConfigured) {
       setBottle(null);
       setListings([]);
+      setEquivalentBottleIds([]);
       setAllListings([]);
       setAllBottles([]);
       setReferencePrice(null);
+      setCollectorNotes([]);
       setFxRate(0);
       setLoading(false);
       return;
@@ -86,19 +105,26 @@ function BottlePageContent() {
           bottleDoc && bottleDocs.length
             ? getEquivalentBottleGroup(bottleDocs, bottleDoc).map((item) => item.id)
             : [bottleId];
-        const listingDocs = await fetchListingsForBottleIds(equivalentBottleIds);
+        const [listingDocs, noteDocs] = await Promise.all([
+          fetchListingsForBottleIds(equivalentBottleIds),
+          fetchCollectorNotes(equivalentBottleIds),
+        ]);
         setBottle(bottleDoc);
+        setEquivalentBottleIds(equivalentBottleIds);
         setAllBottles(bottleDocs);
         setAllListings(allListingDocs);
         setListings(listingDocs);
+        setCollectorNotes(noteDocs);
         setReferencePrice(referenceDoc);
         setFxRate(fxState.rate);
       } catch (nextError) {
         setBottle(null);
         setListings([]);
+        setEquivalentBottleIds([]);
         setAllListings([]);
         setAllBottles([]);
         setReferencePrice(null);
+        setCollectorNotes([]);
         setFxRate(0);
         setError(nextError instanceof Error ? nextError.message : "Unable to load bottle.");
       } finally {
@@ -108,6 +134,26 @@ function BottlePageContent() {
 
     void load();
   }, [bottleId]);
+
+  useEffect(() => {
+    if (!user || !equivalentBottleIds.length || !isBackendConfigured) {
+      setQualifiedNoteBottleId(null);
+      return;
+    }
+
+    let cancelled = false;
+    void findCollectorNoteQualifiedBottleId(equivalentBottleIds)
+      .then((qualifiedBottleId) => {
+        if (!cancelled) setQualifiedNoteBottleId(qualifiedBottleId);
+      })
+      .catch(() => {
+        if (!cancelled) setQualifiedNoteBottleId(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [equivalentBottleIds, user]);
 
   useEffect(() => {
     if (!bottleId || !user || !isBackendConfigured) {
@@ -174,6 +220,140 @@ function BottlePageContent() {
     }
   };
 
+  const onCollectorNoteSubmit = async () => {
+    if (!user) {
+      setNoteMessage(language === "kr" ? "노트는 로그인 후 작성할 수 있습니다." : "Sign in to add a collector note.");
+      return;
+    }
+    if (!qualifiedNoteBottleId) {
+      setNoteMessage(
+        language === "kr"
+          ? "이 바틀에 등록 이력이 있는 컬렉터만 노트를 남길 수 있습니다."
+          : "Only collectors with archive activity can leave notes.",
+      );
+      return;
+    }
+    if (!noteDraft.trim() || noteDraft.trim().length > 300 || noteSubmitting) return;
+
+    setNoteSubmitting(true);
+    setNoteMessage("");
+    try {
+      await createCollectorNote({
+        bottleId: qualifiedNoteBottleId,
+        content: noteDraft,
+        user,
+      });
+      setNoteDraft("");
+      setNoteModalOpen(false);
+      setNoteMessage(
+        language === "kr"
+          ? "노트가 등록되었습니다."
+          : "Collector note published.",
+      );
+      const nextNotes = await fetchCollectorNotes(equivalentBottleIds);
+      setCollectorNotes(nextNotes);
+    } catch (nextError) {
+      setNoteMessage(
+        nextError instanceof Error
+          ? nextError.message
+          : language === "kr"
+            ? "노트를 제출할 수 없습니다."
+            : "Unable to submit collector note.",
+      );
+    } finally {
+      setNoteSubmitting(false);
+    }
+  };
+
+  const onHelpfulNote = async (noteId: string) => {
+    if (!user) {
+      setNoteMessage(language === "kr" ? "로그인 후 Helpful을 누를 수 있습니다." : "Sign in to mark notes helpful.");
+      return;
+    }
+
+    try {
+      const nextHelpfulCount = await markCollectorNoteHelpful(noteId);
+      setCollectorNotes((current) =>
+        current.map((note) =>
+          note.id === noteId
+            ? {
+                ...note,
+                helpfulByCurrentUser: true,
+                helpfulCount: nextHelpfulCount ?? note.helpfulCount,
+              }
+            : note,
+        ),
+      );
+    } catch (nextError) {
+      setNoteMessage(
+        nextError instanceof Error
+          ? nextError.message
+          : language === "kr"
+            ? "Helpful을 저장할 수 없습니다."
+            : "Unable to save helpful vote.",
+      );
+    }
+  };
+
+  const onUpdateCollectorNote = async (noteId: string) => {
+    if (!editingNoteDraft.trim() || editingNoteDraft.trim().length > 300 || noteUpdating) return;
+
+    setNoteUpdating(true);
+    setNoteMessage("");
+    try {
+      const updatedNote = await updateCollectorNoteContent(noteId, editingNoteDraft);
+      setCollectorNotes((current) =>
+        current.map((note) =>
+          note.id === noteId
+            ? {
+                ...note,
+                content: updatedNote.content,
+                updatedAt: updatedNote.updatedAt,
+              }
+            : note,
+        ),
+      );
+      setEditingNoteId("");
+      setEditingNoteDraft("");
+      setNoteMessage(language === "kr" ? "노트를 수정했습니다." : "Collector note updated.");
+    } catch (nextError) {
+      setNoteMessage(
+        nextError instanceof Error
+          ? nextError.message
+          : language === "kr"
+            ? "노트를 수정할 수 없습니다."
+            : "Unable to update collector note.",
+      );
+    } finally {
+      setNoteUpdating(false);
+    }
+  };
+
+  const onDeleteCollectorNote = async (noteId: string) => {
+    if (noteUpdating) return;
+
+    setNoteUpdating(true);
+    setNoteMessage("");
+    try {
+      await hideOwnCollectorNote(noteId);
+      setCollectorNotes((current) => current.filter((note) => note.id !== noteId));
+      setEditingNoteId("");
+      setEditingNoteDraft("");
+      setDeleteNoteId("");
+      setNoteMessage(language === "kr" ? "노트를 삭제했습니다." : "Collector note deleted.");
+    } catch (nextError) {
+      setNoteMessage(
+        nextError instanceof Error
+          ? nextError.message
+          : language === "kr"
+            ? "노트를 삭제할 수 없습니다."
+            : "Unable to delete collector note.",
+      );
+    } finally {
+      setNoteUpdating(false);
+    }
+  };
+
   if (!bottleId) {
     return (
       <EmptyState
@@ -231,11 +411,11 @@ function BottlePageContent() {
       timestamp: point.timestamp ?? 0,
       price: typeof point.price === "number" && Number.isFinite(point.price) ? point.price : null,
     }));
-  const equivalentBottleIds = bottle ? new Set(getEquivalentBottleGroup(allBottles, bottle).map((item) => item.id)) : new Set<string>();
+  const equivalentBottleIdSet = bottle ? new Set(getEquivalentBottleGroup(allBottles, bottle).map((item) => item.id)) : new Set<string>();
   const relatedBottles = allBottles
     .filter(
       (item) =>
-        !equivalentBottleIds.has(item.id) &&
+        !equivalentBottleIdSet.has(item.id) &&
         item.category === bottle?.category,
     )
     .slice(0, 4)
@@ -586,6 +766,142 @@ function BottlePageContent() {
         </div>
       </section>
 
+      <section className="rounded-[1.75rem] border border-[#e7e1d8] bg-white p-6 sm:p-8">
+        <div className="flex flex-col gap-5 border-b border-[#ece8e0] pb-5 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-2xl font-black tracking-[-0.04em] text-[#111111]">
+              {language === "kr" ? "컬렉터 노트" : "Collector Notes"}
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-[#7b746a]">
+              {language === "kr"
+                ? "컬렉터가 남긴 짧은 인사이트입니다. 공식 데이터가 아닌 개인 관찰입니다."
+                : "Curated bottle observations from collectors. Personal insight, not official data."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setNoteMessage("");
+              setNoteModalOpen(true);
+            }}
+            className="inline-flex items-center justify-center border border-[#d8d2c8] bg-white px-5 py-3 text-[11px] font-extrabold uppercase tracking-[0.22em] text-[#111111] transition hover:border-[#111111]"
+          >
+            + {user ? (language === "kr" ? "노트 추가" : "Add note") : (language === "kr" ? "로그인 후 노트 추가" : "Add note (login)")}
+          </button>
+        </div>
+
+        {noteMessage ? (
+          <p className="mt-4 text-sm font-medium text-[#8d5b33]">{noteMessage}</p>
+        ) : null}
+
+        <div className="mt-6 divide-y divide-[#ece8e0] border border-[#ece8e0]">
+          {collectorNotes.length ? (
+            collectorNotes.slice(0, 6).map((note) => {
+              const isOwnNote = Boolean(user && note.createdBy === user.uid);
+              const isEditing = editingNoteId === note.id;
+              return (
+                <article key={note.id} className="grid gap-5 px-5 py-5 md:grid-cols-[220px_minmax(0,1fr)_160px] md:items-start">
+                  <div>
+                    <p className="font-bold text-[#111111]">{note.displayName}</p>
+                    <p className="mt-1 inline-flex items-center gap-1.5 text-xs font-medium text-[#7b746a]">
+                      <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4 text-[#2f80ed]">
+                        <path
+                          fill="currentColor"
+                          d="M10 1.6 3.5 4.2v4.9c0 4.1 2.6 7.7 6.5 9.3 3.9-1.6 6.5-5.2 6.5-9.3V4.2L10 1.6Zm3.4 6.7-4.1 4.5-2.2-2.1 1.1-1.2 1.1 1.1 3-3.4 1.1 1.1Z"
+                        />
+                      </svg>
+                      <span>{language === "kr" ? "인증된 컬렉터" : "Verified Collector"}</span>
+                    </p>
+                  </div>
+                  <div>
+                    {isEditing ? (
+                      <div className="space-y-3">
+                        <div className="relative">
+                          <textarea
+                            value={editingNoteDraft}
+                            onChange={(event) => setEditingNoteDraft(event.target.value.slice(0, 300))}
+                            disabled={noteUpdating}
+                            className="min-h-28 w-full resize-none border border-[#d8d2c8] bg-white px-4 py-3 pr-20 text-sm leading-7 text-[#111111] outline-none transition focus:border-[#111111] disabled:bg-[#f4f1ec]"
+                          />
+                          <span className="absolute bottom-3 right-3 text-xs font-bold text-[#8f877d]">
+                            {editingNoteDraft.length} / 300
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => onUpdateCollectorNote(note.id)}
+                            disabled={!editingNoteDraft.trim() || editingNoteDraft.length > 300 || noteUpdating}
+                            className="border border-[#111111] bg-[#111111] px-3 py-2 text-[10px] font-extrabold uppercase tracking-[0.18em] text-white transition disabled:cursor-not-allowed disabled:border-[#c9c1b7] disabled:bg-[#c9c1b7]"
+                          >
+                            {language === "kr" ? "저장" : "Save"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingNoteId("");
+                              setEditingNoteDraft("");
+                            }}
+                            disabled={noteUpdating}
+                            className="border border-[#d8d2c8] bg-white px-3 py-2 text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#111111]"
+                          >
+                            {language === "kr" ? "취소" : "Cancel"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm leading-7 text-[#111111]">{note.content}</p>
+                    )}
+                  </div>
+                  <div className="space-y-4 text-left md:text-right">
+                    <p className="text-xs text-[#7b746a]">{formatUiDate(String(note.createdAt), language)}</p>
+                    <button
+                      type="button"
+                      onClick={() => onHelpfulNote(note.id)}
+                      disabled={Boolean(note.helpfulByCurrentUser)}
+                      className="text-xs font-bold text-[#5f5145] transition hover:text-[#111111] disabled:cursor-default disabled:text-[#8f877d]"
+                    >
+                      {note.helpfulByCurrentUser ? "✓ " : "♡ "}
+                      {language === "kr" ? `Helpful ${note.helpfulCount}` : `Helpful ${note.helpfulCount}`}
+                    </button>
+                    {isOwnNote ? (
+                      <div className="flex flex-wrap gap-3 md:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingNoteId(note.id);
+                            setEditingNoteDraft(note.content);
+                            setNoteMessage("");
+                          }}
+                          disabled={noteUpdating || isEditing}
+                          className="text-xs font-bold text-[#5f5145] transition hover:text-[#111111] disabled:opacity-40"
+                        >
+                          {language === "kr" ? "수정" : "Edit"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteNoteId(note.id)}
+                          disabled={noteUpdating}
+                          className="text-xs font-bold text-red-600 transition hover:text-red-700 disabled:opacity-40"
+                        >
+                          {language === "kr" ? "삭제" : "Delete"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            })
+          ) : (
+            <div className="px-5 py-8 text-sm text-[#7b746a]">
+              {language === "kr"
+                ? "아직 등록된 컬렉터 노트가 없습니다."
+                : "No collector notes yet."}
+            </div>
+          )}
+        </div>
+      </section>
+
       <section id="listing-archive" className="space-y-4">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.16em] text-neutral-500">{language === "kr" ? "등록 아카이브" : "Listing archive"}</p>
@@ -642,6 +958,158 @@ function BottlePageContent() {
             ))}
           </div>
         </section>
+      ) : null}
+
+      {noteModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-8">
+          <div className="w-full max-w-xl rounded-[1.5rem] bg-white p-6 shadow-2xl sm:p-8">
+            <div className="flex items-start justify-between gap-6">
+              <div>
+                <h2 className="text-2xl font-black tracking-[-0.04em] text-[#111111]">
+                  {language === "kr" ? "컬렉터 노트 추가" : "Add Collector Note"}
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-[#7b746a]">
+                  {language === "kr"
+                    ? "이 바틀에 대한 짧은 관찰과 시장 인사이트를 공유하세요."
+                    : "Share a short collector insight about this bottle."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNoteModalOpen(false)}
+                className="text-3xl leading-none text-[#7b746a] transition hover:text-[#111111]"
+                aria-label="Close collector note modal"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mt-6 border border-[#e7e1d8] bg-[#fbf8f2] p-4">
+              <p className="text-sm font-bold text-[#111111]">
+                {user
+                  ? qualifiedNoteBottleId
+                    ? language === "kr"
+                      ? "아카이브 활동이 확인되었습니다"
+                      : "Verified archive activity detected"
+                    : language === "kr"
+                      ? "작성 권한이 없습니다"
+                      : "Collector activity required"
+                  : language === "kr"
+                    ? "로그인이 필요합니다"
+                    : "Sign in required"}
+              </p>
+              <p className="mt-2 text-sm leading-6 text-[#7b746a]">
+                {user
+                  ? qualifiedNoteBottleId
+                    ? language === "kr"
+                      ? "이 바틀을 등록했거나 리스팅을 만든 컬렉터만 노트를 남길 수 있습니다."
+                      : "Only collectors who registered this bottle or created a listing can leave notes."
+                    : language === "kr"
+                      ? "이 바틀에 등록 이력이 있는 컬렉터만 노트를 남길 수 있습니다."
+                      : "Only collectors with archive activity can leave notes."
+                  : language === "kr"
+                    ? "컬렉터 노트를 작성하려면 먼저 로그인해주세요."
+                    : "Please sign in before writing a collector note."}
+              </p>
+            </div>
+
+            <div className="mt-6">
+              <label className="mb-3 block text-[10px] font-extrabold uppercase tracking-[0.24em] text-[#7b746a]">
+                {language === "kr" ? "내 노트" : "Your note"}
+              </label>
+              <div className="relative">
+                <textarea
+                  value={noteDraft}
+                  onChange={(event) => setNoteDraft(event.target.value.slice(0, 300))}
+                  disabled={!user || !qualifiedNoteBottleId || noteSubmitting}
+                  className="min-h-44 w-full resize-none border border-[#d8d2c8] bg-white px-4 py-4 pr-20 text-sm leading-7 text-[#111111] outline-none transition focus:border-[#111111] disabled:bg-[#f4f1ec] disabled:text-[#8f877d]"
+                  placeholder={
+                    language === "kr"
+                      ? "릴리즈 차이, 라벨 변화, 시장 수요 같은 짧은 인사이트를 남겨주세요."
+                      : "Share a short insight, release difference, label change, or market observation."
+                  }
+                />
+                <span className="absolute bottom-4 right-4 text-xs font-bold text-[#8f877d]">
+                  {noteDraft.length} / 300
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <p className="mb-3 text-xs font-bold text-[#7b746a]">
+                {language === "kr" ? "좋은 노트 힌트" : "Tips for a helpful note"}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {(language === "kr"
+                  ? ["릴리즈 차이", "시장 흐름", "라벨 / 패키징"]
+                  : ["Release differences", "Market trend", "Label / Packaging"]
+                ).map((tip) => (
+                  <span key={tip} className="rounded-full bg-[#f0ece5] px-3 py-1.5 text-xs font-bold text-[#5f5145]">
+                    {tip}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {noteMessage ? (
+              <p className="mt-5 text-sm font-medium text-[#8d5b33]">{noteMessage}</p>
+            ) : null}
+
+            <div className="mt-8 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setNoteModalOpen(false)}
+                className="border border-[#d8d2c8] bg-white px-6 py-4 text-[11px] font-extrabold uppercase tracking-[0.22em] text-[#111111] transition hover:border-[#111111]"
+              >
+                {language === "kr" ? "취소" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                onClick={onCollectorNoteSubmit}
+                disabled={!user || !qualifiedNoteBottleId || !noteDraft.trim() || noteDraft.length > 300 || noteSubmitting}
+                className="bg-[#111111] px-6 py-4 text-[11px] font-extrabold uppercase tracking-[0.22em] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#c9c1b7]"
+              >
+                {noteSubmitting ? (language === "kr" ? "제출 중" : "Submitting") : language === "kr" ? "노트 제출" : "Submit note"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteNoteId ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-8">
+          <div className="w-full max-w-md rounded-[1.25rem] bg-white p-6 shadow-2xl sm:p-7">
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.24em] text-[#8b5a34]">
+              {language === "kr" ? "노트 삭제" : "Delete note"}
+            </p>
+            <h2 className="mt-2 text-2xl font-black tracking-[-0.04em] text-[#111111]">
+              {language === "kr" ? "이 노트를 삭제하시겠습니까?" : "Delete this collector note?"}
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-[#7b746a]">
+              {language === "kr"
+                ? "삭제하면 이 바틀 상세 페이지에서 바로 보이지 않게 됩니다."
+                : "This will immediately remove the note from this bottle page."}
+            </p>
+            <div className="mt-7 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setDeleteNoteId("")}
+                disabled={noteUpdating}
+                className="border border-[#d8d2c8] bg-white px-5 py-4 text-[11px] font-extrabold uppercase tracking-[0.22em] text-[#111111] transition hover:border-[#111111] disabled:opacity-50"
+              >
+                {language === "kr" ? "취소" : "Cancel"}
+              </button>
+              <button
+                type="button"
+                onClick={() => onDeleteCollectorNote(deleteNoteId)}
+                disabled={noteUpdating}
+                className="bg-red-600 px-5 py-4 text-[11px] font-extrabold uppercase tracking-[0.22em] text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-300"
+              >
+                {noteUpdating ? (language === "kr" ? "삭제 중" : "Deleting") : language === "kr" ? "삭제" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

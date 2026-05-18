@@ -9,6 +9,7 @@ export type SpiritCategory =
 export type ListingCurrency = "USD" | "KRW";
 export type ListingStatus = "active" | "inactive";
 export type ReportStatus = "open" | "resolved";
+export type CollectorNoteStatus = "pending" | "approved" | "hidden";
 export type MessengerType = "kakaotalk" | "telegram" | "signal" | "whatsapp" | "line";
 export type AppDateValue = { toDate(): Date } | Date | string | null | undefined;
 export type FirestoreDate = AppDateValue;
@@ -18,6 +19,7 @@ export interface AppUser {
   email: string;
   firstName?: string;
   lastName?: string;
+  displayName?: string;
   dateOfBirth?: string;
 }
 
@@ -102,6 +104,19 @@ export interface WishlistBottle {
   createdBy: string;
   createdAt: AppDateValue;
   bottle: Bottle;
+}
+
+export interface CollectorNote {
+  id: string;
+  bottleId: string;
+  createdBy: string;
+  displayName: string;
+  content: string;
+  helpfulCount: number;
+  status: CollectorNoteStatus;
+  helpfulByCurrentUser?: boolean;
+  createdAt: AppDateValue;
+  updatedAt: AppDateValue;
 }
 
 export interface HomepageBanner {

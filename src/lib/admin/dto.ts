@@ -15,6 +15,7 @@ export type AdminSection =
   | "News"
   | "Bottles"
   | "Hero / Banner"
+  | "Collector Notes"
   | "Reports"
   | "Users"
   | "Subscription"
@@ -103,6 +104,7 @@ export const ADMIN_NAV_ITEMS: readonly AdminSection[] = [
   "News",
   "Bottles",
   "Hero / Banner",
+  "Collector Notes",
   "Reports",
   "Users",
   "Subscription",

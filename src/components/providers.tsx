@@ -46,6 +46,10 @@ function mapSessionUser(nextUser: {
       typeof nextUser.user_metadata?.last_name === "string"
         ? nextUser.user_metadata.last_name
         : "",
+    displayName:
+      typeof nextUser.user_metadata?.display_name === "string"
+        ? nextUser.user_metadata.display_name
+        : "",
     dateOfBirth:
       typeof nextUser.user_metadata?.date_of_birth === "string"
         ? nextUser.user_metadata.date_of_birth

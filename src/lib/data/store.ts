@@ -6,3 +6,5 @@ export * from "@/lib/data/admin";
 export * from "@/lib/data/content-slots";
 export * from "@/lib/data/audit";
 export * from "@/lib/data/wishlist";
+export * from "@/lib/data/collector-notes";
+export * from "@/lib/data/profiles";

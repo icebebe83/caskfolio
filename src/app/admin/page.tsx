@@ -39,12 +39,14 @@ import {
   checkAdmin,
   createManualNews,
   deleteBottle,
+  deleteCollectorNote,
   deleteBottleReferencePrice,
   deleteListing,
   fetchAuditLogs,
   deleteHomepageBanner,
   deleteNewsItem,
   fetchAdminListings,
+  fetchAdminCollectorNotes,
   fetchAdminMetrics,
   fetchAdminNews,
   fetchAdminUsers,
@@ -58,6 +60,8 @@ import {
   saveBottleReferencePrice,
   syncLocalHomepageBannersToRemote,
   updateBottle,
+  updateCollectorNoteContent,
+  updateCollectorNoteStatus,
   updateBottleHotFlag,
   updateBottleImageUrl,
   updateBottleMasterImage,
@@ -71,6 +75,7 @@ import type {
   AdminNewsItem,
   AuditLogEntry,
   Bottle,
+  CollectorNote,
   Listing,
   Report,
 } from "@/lib/types";
@@ -142,6 +147,8 @@ export default function AdminPage() {
   const [bottleReferences, setBottleReferences] = useState<BottleReferencePrice[]>([]);
   const [listings, setListings] = useState<Listing[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
+  const [collectorNotes, setCollectorNotes] = useState<CollectorNote[]>([]);
+  const [collectorNoteDrafts, setCollectorNoteDrafts] = useState<Record<string, string>>({});
   const [newsItems, setNewsItems] = useState<AdminNewsItem[]>([]);
   const [users, setUsers] = useState<AdminProfileSummary[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -183,6 +190,7 @@ export default function AdminPage() {
       reportDocs,
       bottleDocs,
       referenceDocs,
+      collectorNoteDocs,
       newsDocs,
       userDocs,
       heroBannerData,
@@ -193,6 +201,7 @@ export default function AdminPage() {
       fetchReports(),
       fetchBottles(),
       fetchBottleReferencePrices(),
+      fetchAdminCollectorNotes(),
       fetchAdminNews(),
       fetchAdminUsers(),
       fetchHomepageBanners(),
@@ -203,6 +212,8 @@ export default function AdminPage() {
     setReports(reportDocs);
     setBottles(bottleDocs);
     setBottleReferences(referenceDocs);
+    setCollectorNotes(collectorNoteDocs);
+    setCollectorNoteDrafts(Object.fromEntries(collectorNoteDocs.map((note) => [note.id, note.content])));
     setNewsItems(newsDocs);
     setNewsImageDrafts(Object.fromEntries(newsDocs.map((item) => [item.id, item.imageUrl])));
     setUsers(userDocs);
@@ -416,6 +427,32 @@ export default function AdminPage() {
       await updateListingStatus(report.listingId, "inactive");
       await updateReportStatus(report.id, "resolved");
     }, "Listing marked inactive and report resolved.");
+  };
+
+  const onCollectorNoteStatusChange = (noteId: string, status: CollectorNote["status"]) => {
+    withAction(
+      () => updateCollectorNoteStatus(noteId, status),
+      `Collector note marked ${status}.`,
+    );
+  };
+
+  const onCollectorNoteContentSave = (noteId: string) => {
+    const content = collectorNoteDrafts[noteId] ?? "";
+    withAction(
+      async () => {
+        await updateCollectorNoteContent(noteId, content);
+      },
+      "Collector note updated.",
+    );
+  };
+
+  const onCollectorNoteDelete = (noteId: string) => {
+    const confirmed =
+      typeof window === "undefined" ||
+      window.confirm("Delete this collector note?");
+    if (!confirmed) return;
+
+    withAction(() => deleteCollectorNote(noteId), "Collector note deleted.");
   };
 
   const onSaveBottle = () => {
@@ -1691,6 +1728,119 @@ export default function AdminPage() {
     </section>
   );
 
+  const renderCollectorNotes = () => (
+    <section className="panel overflow-hidden">
+      <div className="border-b border-ink/8 px-6 py-4">
+        <p className="text-xs uppercase tracking-[0.24em] text-cask">Collector Notes</p>
+        <h2 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-semibold text-ink">
+          Notes moderation
+        </h2>
+        <p className="mt-2 text-sm text-ink/60">
+          Edit, hide, or remove short collector insights shown on bottle detail pages.
+        </p>
+      </div>
+      <div className="divide-y divide-ink/8">
+        {collectorNotes.length ? (
+          collectorNotes.map((note) => {
+            const relatedBottle = bottleMap.get(note.bottleId);
+            return (
+              <article key={note.id} className="grid gap-5 px-6 py-5 lg:grid-cols-[1fr_auto] lg:items-start">
+                <div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <p className="font-semibold text-ink">{note.displayName}</p>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                        note.status === "approved"
+                          ? "bg-emerald-50 text-emerald-700"
+                          : note.status === "hidden"
+                            ? "bg-red-50 text-red-700"
+                            : "bg-amber-50 text-amber-700"
+                      }`}
+                    >
+                      {note.status}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs uppercase tracking-[0.16em] text-ink/45">
+                    {relatedBottle?.name ?? "Unknown bottle"} · Helpful {note.helpfulCount} · {formatDate(note.createdAt)}
+                  </p>
+                  <div className="mt-4 max-w-3xl space-y-2">
+                    <textarea
+                      value={collectorNoteDrafts[note.id] ?? note.content}
+                      onChange={(event) =>
+                        setCollectorNoteDrafts((current) => ({
+                          ...current,
+                          [note.id]: event.target.value.slice(0, 300),
+                        }))
+                      }
+                      rows={3}
+                      className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm leading-7 text-ink/75 outline-none transition focus:border-ink/40"
+                    />
+                    <p className="text-xs text-ink/45">
+                      {(collectorNoteDrafts[note.id] ?? note.content).length} / 300
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 lg:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => onCollectorNoteContentSave(note.id)}
+                    disabled={
+                      isPending ||
+                      !(collectorNoteDrafts[note.id] ?? note.content).trim() ||
+                      (collectorNoteDrafts[note.id] ?? note.content).length > 300
+                    }
+                    className="rounded-full border border-ink/10 px-3 py-2 text-xs font-medium disabled:opacity-40"
+                  >
+                    Save
+                  </button>
+                  {note.status !== "approved" ? (
+                    <button
+                      type="button"
+                      onClick={() => onCollectorNoteStatusChange(note.id, "approved")}
+                      className="rounded-full border border-ink/10 px-3 py-2 text-xs font-medium"
+                    >
+                      Approve
+                    </button>
+                  ) : null}
+                  {note.status !== "hidden" ? (
+                    <button
+                      type="button"
+                      onClick={() => onCollectorNoteStatusChange(note.id, "hidden")}
+                      className="rounded-full border border-red-200 px-3 py-2 text-xs font-medium text-red-700"
+                    >
+                      Hide
+                    </button>
+                  ) : null}
+                  {note.status !== "pending" ? (
+                    <button
+                      type="button"
+                      onClick={() => onCollectorNoteStatusChange(note.id, "pending")}
+                      className="rounded-full border border-ink/10 px-3 py-2 text-xs font-medium"
+                    >
+                      Pending
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => onCollectorNoteDelete(note.id)}
+                    disabled={isPending}
+                    className="rounded-full border border-red-200 px-3 py-2 text-xs font-medium text-red-700 disabled:opacity-40"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </article>
+            );
+          })
+        ) : (
+          <div className="px-6 py-8 text-sm text-ink/60">
+            No collector notes have been submitted yet.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
   const renderUsers = () => (
     <section className="panel overflow-hidden">
       <div className="border-b border-ink/8 px-6 py-4">
@@ -1793,6 +1943,8 @@ export default function AdminPage() {
         return renderBottles();
       case "Hero / Banner":
         return renderHeroBanner();
+      case "Collector Notes":
+        return renderCollectorNotes();
       case "Reports":
         return renderReports();
       case "Users":

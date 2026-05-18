@@ -5,6 +5,7 @@ create table public.profiles (
   email text not null default '',
   first_name text not null default '',
   last_name text not null default '',
+  display_name text not null default '',
   date_of_birth date,
   terms_accepted_at timestamptz,
   created_at timestamptz not null default now()

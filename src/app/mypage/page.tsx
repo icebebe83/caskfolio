@@ -11,8 +11,15 @@ import { useAuth } from "@/components/providers";
 import { getBottleImageForSurface, getListingImageForSurface, isDefaultRegisterBottleImage } from "@/lib/media/images";
 import { formatDate, formatUsd, toDate } from "@/lib/format";
 import { isBackendConfigured } from "@/lib/backend/client";
-import { fetchAllListings, fetchBottles, fetchWishlistBottles } from "@/lib/data/store";
-import type { Bottle, Listing, WishlistBottle } from "@/lib/types";
+import {
+  fetchAllListings,
+  fetchBottleReferencePrices,
+  fetchBottles,
+  fetchCurrentProfileDisplayName,
+  fetchWishlistBottles,
+  updateCurrentProfileDisplayName,
+} from "@/lib/data/store";
+import type { Bottle, BottleReferencePrice, Listing, WishlistBottle } from "@/lib/types";
 
 const MY_COLLECTION_PAGE_SIZE = 8;
 
@@ -28,12 +35,16 @@ export default function MyPage() {
   const { language } = useLanguage();
   const [allListings, setAllListings] = useState<Listing[]>([]);
   const [bottles, setBottles] = useState<Bottle[]>([]);
+  const [bottleReferences, setBottleReferences] = useState<BottleReferencePrice[]>([]);
   const [listings, setListings] = useState<Listing[]>([]);
   const [wishlistEntries, setWishlistEntries] = useState<WishlistBottle[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [error, setError] = useState("");
   const [collectionPage, setCollectionPage] = useState(1);
+  const [displayNameInput, setDisplayNameInput] = useState("");
+  const [profileMessage, setProfileMessage] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
 
   useEffect(() => {
     setHasHydrated(true);
@@ -47,10 +58,12 @@ export default function MyPage() {
 
     const load = async () => {
       try {
-        const [allListings, allBottles, wishlist] = await Promise.all([
+        const [allListings, allBottles, referencePrices, wishlist, profileDisplayName] = await Promise.all([
           fetchAllListings(500),
           fetchBottles(),
+          fetchBottleReferencePrices(),
           fetchWishlistBottles(),
+          fetchCurrentProfileDisplayName(),
         ]);
         setAllListings(allListings);
         setListings(
@@ -62,7 +75,15 @@ export default function MyPage() {
             ),
         );
         setBottles(allBottles);
+        setBottleReferences(referencePrices);
         setWishlistEntries(wishlist);
+        setDisplayNameInput(
+          profileDisplayName ||
+            user.displayName ||
+            [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
+            user.email.split("@")[0] ||
+            "",
+        );
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "Unable to load your portfolio.");
       } finally {
@@ -132,6 +153,16 @@ export default function MyPage() {
     return listingMap;
   }, [allListings]);
 
+  const bottleReferenceMap = useMemo(() => {
+    const referenceMap = new Map<string, BottleReferencePrice>();
+    bottleReferences.forEach((reference) => {
+      if (!referenceMap.has(reference.bottleId)) {
+        referenceMap.set(reference.bottleId, reference);
+      }
+    });
+    return referenceMap;
+  }, [bottleReferences]);
+
   useEffect(() => {
     setCollectionPage((current) => Math.min(Math.max(1, current), collectionPageCount));
   }, [collectionPageCount]);
@@ -140,9 +171,52 @@ export default function MyPage() {
     (sum, entry) => sum + entry.totalBottleValueUsd,
     0,
   );
+  const portfolioReferenceSummary = useMemo(() => {
+    return listings.reduce(
+      (sum, listing) => {
+        const reference = bottleReferenceMap.get(listing.bottleId);
+        const quantity = Math.max(listing.quantity || 1, 1);
+        const listedValueUsd = listing.normalizedPriceUsd * quantity;
+        const referenceValueUsd = (reference?.referencePriceUsd ?? 0) * quantity;
+
+        sum.referenceValueUsd += referenceValueUsd;
+        sum.gainValueUsd += listedValueUsd - referenceValueUsd;
+        return sum;
+      },
+      { referenceValueUsd: 0, gainValueUsd: 0 },
+    );
+  }, [bottleReferenceMap, listings]);
   const activeListingCount = listings.filter((listing) => listing.status === "active").length;
   const featuredEntry = collectionEntries[0] ?? null;
   const recentEntries = collectionEntries.slice(1, 4);
+
+  const onSaveDisplayName = async () => {
+    if (profileSaving) return;
+    setProfileSaving(true);
+    setProfileMessage("");
+
+    try {
+      const savedDisplayName = await updateCurrentProfileDisplayName(displayNameInput);
+      setDisplayNameInput(savedDisplayName);
+      setProfileMessage(language === "kr" ? "닉네임을 저장했습니다." : "Nickname saved.");
+    } catch (nextError) {
+      const message =
+        nextError instanceof Error && nextError.message === "nickname-taken"
+          ? language === "kr"
+            ? "이미 사용 중인 닉네임입니다."
+            : "This nickname is already taken."
+          : nextError instanceof Error
+            ? nextError.message
+            : language === "kr"
+              ? "닉네임을 저장할 수 없습니다."
+              : "Unable to save nickname.";
+      setProfileMessage(
+        message,
+      );
+    } finally {
+      setProfileSaving(false);
+    }
+  };
 
   if (!isBackendConfigured) {
     return (
@@ -188,6 +262,42 @@ export default function MyPage() {
 
   return (
     <div className="space-y-14 pb-8">
+      <section className="rounded-[1.25rem] border border-[#e9e4da] bg-white px-5 py-4">
+        <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)_auto] lg:items-center">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#7a746b]">
+              {language === "kr" ? "컬렉터 닉네임" : "Collector nickname"}
+            </p>
+            <p className="mt-1 text-xs text-[#8b857c]">
+              {language === "kr" ? "Collector Notes 작성자명" : "Shown on Collector Notes"}
+            </p>
+          </div>
+          <input
+            value={displayNameInput}
+            onChange={(event) => {
+              setDisplayNameInput(event.target.value.slice(0, 32));
+              setProfileMessage("");
+            }}
+            className="w-full rounded-full border border-[#e2ddd3] bg-white px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#111111]"
+            placeholder={language === "kr" ? "중복되지 않는 닉네임" : "Unique collector nickname"}
+          />
+          <button
+            type="button"
+            onClick={onSaveDisplayName}
+            disabled={profileSaving || displayNameInput.trim().length < 2}
+            className="inline-flex items-center justify-center rounded-full bg-[#111111] px-5 py-3 text-[10px] font-extrabold uppercase tracking-[0.18em] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#c9c1b7]"
+          >
+            {profileSaving ? (language === "kr" ? "저장 중" : "Saving") : language === "kr" ? "저장" : "Save"}
+          </button>
+        </div>
+        <p className="mt-3 text-xs text-[#7a746b]">
+          {profileMessage ||
+            (language === "kr"
+              ? "다른 유저와 같은 닉네임은 사용할 수 없습니다."
+              : "Nicknames must be unique across collectors.")}
+        </p>
+      </section>
+
       <header className="flex flex-col justify-between gap-10 border-b border-[#e9e4da] pb-12 lg:flex-row lg:items-end">
         <div className="max-w-3xl">
           <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#8b5a34]">{language === "kr" ? "마이페이지" : "My Page"}</p>
@@ -202,6 +312,31 @@ export default function MyPage() {
               <p className="text-3xl font-black tracking-[-0.04em] text-[#111111]">
                 {formatUsd(totalPortfolioValueUsd)}
               </p>
+              <div className="mt-2 space-y-1">
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#7a746b]">
+                  {language === "kr"
+                    ? `글로벌 기준 총액 ${formatUsd(portfolioReferenceSummary.referenceValueUsd)}`
+                    : `Global ref total ${formatUsd(portfolioReferenceSummary.referenceValueUsd)}`}
+                </p>
+                <p
+                  className={`text-xs font-extrabold uppercase tracking-[0.14em] ${
+                    portfolioReferenceSummary.gainValueUsd >= 0 ? "text-red-600" : "text-blue-600"
+                  }`}
+                >
+                  {portfolioReferenceSummary.gainValueUsd >= 0 ? "▲" : "▼"}{" "}
+                  {portfolioReferenceSummary.gainValueUsd >= 0 ? "+" : "-"}
+                  {formatUsd(Math.abs(portfolioReferenceSummary.gainValueUsd))}{" "}
+                  <span className="text-[#7a746b]">
+                    {portfolioReferenceSummary.gainValueUsd >= 0
+                      ? language === "kr"
+                        ? "평가 이익"
+                        : "estimated gain"
+                      : language === "kr"
+                        ? "평가 손실"
+                        : "estimated loss"}
+                  </span>
+                </p>
+              </div>
             </div>
             <div className="hidden h-9 w-px bg-[#e9e4da] sm:block" />
             <div>
@@ -224,10 +359,10 @@ export default function MyPage() {
           </div>
         </div>
 
-        <div className="flex gap-4">
+        <div className="flex flex-col gap-4 sm:min-w-[320px]">
           <Link
             href="/submit"
-            className="inline-flex items-center bg-[#111111] px-8 py-4 text-[11px] font-extrabold uppercase tracking-[0.24em] text-white transition hover:bg-black"
+            className="inline-flex items-center justify-center bg-[#111111] px-8 py-4 text-[11px] font-extrabold uppercase tracking-[0.24em] text-white transition hover:bg-black"
           >
             {language === "kr" ? "바틀 등록" : "Register bottle"}
           </Link>

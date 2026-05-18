@@ -15,11 +15,24 @@ export async function syncAuthProfile(user: {
   await ensureProfile(user);
 
   const metadata = readUserProfileMetadata(user);
+  let displayName = "";
+  try {
+    const { data } = await supabase!
+      .from("profiles")
+      .select("display_name")
+      .eq("id", user.id)
+      .maybeSingle();
+    displayName = typeof data?.display_name === "string" ? data.display_name : "";
+  } catch {
+    displayName = "";
+  }
+
   return {
     uid: user.id,
     email: user.email ?? "",
     firstName: metadata.firstName,
     lastName: metadata.lastName,
+    displayName,
     dateOfBirth: metadata.dateOfBirth,
   };
 }

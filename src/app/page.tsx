@@ -448,7 +448,35 @@ export default function HomePage() {
         <div className="mx-auto max-w-[1440px] px-5 sm:px-8">
           <div className="grid gap-14 md:grid-cols-[1.6fr_0.9fr_0.9fr]">
             <div>
-              <p className="text-[2rem] font-black tracking-[-0.05em] text-[#111111]">Caskfolio</p>
+              <div className="flex items-center gap-4">
+                <p className="text-[2rem] font-black tracking-[-0.05em] text-[#111111]">Caskfolio</p>
+                <a
+                  href="https://www.instagram.com/caskfolio/"
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="Caskfolio Instagram"
+                  className="inline-flex items-center justify-center text-[#111111] transition hover:text-[#8d5b33]"
+                >
+                  <svg
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                    className="h-8 w-8"
+                  fill="none"
+                >
+                    <rect
+                      x="4"
+                      y="4"
+                      width="16"
+                      height="16"
+                      rx="5"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    />
+                    <circle cx="12" cy="12" r="3.5" stroke="currentColor" strokeWidth="2" />
+                    <circle cx="17" cy="7" r="1.1" fill="currentColor" />
+                  </svg>
+                </a>
+              </div>
               <p className="mt-6 max-w-sm text-sm leading-8 text-[#7b746a]">
                 {language === "kr"
                   ? "수집가를 위한 바틀 가격 인덱스이자 시장 아카이브입니다."
