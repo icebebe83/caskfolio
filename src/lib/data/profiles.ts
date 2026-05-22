@@ -83,15 +83,28 @@ export async function updateCurrentProfileDisplayName(displayName: string): Prom
 }
 
 export async function updateCurrentAccountProfile(input: {
-  name: string;
+  firstName: string;
+  lastName: string;
+  dateOfBirth: string;
   displayName: string;
-}): Promise<{ name: string; displayName: string }> {
+}): Promise<{
+  firstName: string;
+  lastName: string;
+  dateOfBirth: string;
+  displayName: string;
+}> {
   assertSupabaseConfigured();
-  const normalizedName = input.name.trim().replace(/\s+/g, " ").slice(0, 60);
+  const normalizedFirstName = input.firstName.trim().replace(/\s+/g, " ").slice(0, 40);
+  const normalizedLastName = input.lastName.trim().replace(/\s+/g, " ").slice(0, 40);
+  const normalizedDateOfBirth = input.dateOfBirth.trim();
   const normalizedDisplayName = normalizeDisplayName(input.displayName);
+  const fullName = [normalizedFirstName, normalizedLastName].filter(Boolean).join(" ");
 
-  if (normalizedName.length < 2) {
-    throw new Error("Name must be at least 2 characters.");
+  if (normalizedFirstName.length < 1) {
+    throw new Error("First name is required.");
+  }
+  if (normalizedDateOfBirth && Number.isNaN(new Date(normalizedDateOfBirth).getTime())) {
+    throw new Error("Date of birth is invalid.");
   }
   if (normalizedDisplayName.length < 2) {
     throw new Error("Nickname must be at least 2 characters.");
@@ -99,15 +112,21 @@ export async function updateCurrentAccountProfile(input: {
 
   const { error: authError } = await supabase!.auth.updateUser({
     data: {
-      first_name: normalizedName,
-      last_name: "",
-      full_name: normalizedName,
+      first_name: normalizedFirstName,
+      last_name: normalizedLastName,
+      full_name: fullName,
+      date_of_birth: normalizedDateOfBirth,
     },
   });
-  if (authError) throw toSupabaseError(authError, "Unable to save profile name.");
+  if (authError) throw toSupabaseError(authError, "Unable to save profile.");
 
   const savedDisplayName = await updateCurrentProfileDisplayName(normalizedDisplayName);
-  return { name: normalizedName, displayName: savedDisplayName };
+  return {
+    firstName: normalizedFirstName,
+    lastName: normalizedLastName,
+    dateOfBirth: normalizedDateOfBirth,
+    displayName: savedDisplayName,
+  };
 }
 
 export async function updateCurrentPassword(input: {

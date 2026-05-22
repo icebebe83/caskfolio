@@ -99,7 +99,9 @@ export default function MyPage() {
   const [collectionPage, setCollectionPage] = useState(1);
   const [activeSection, setActiveSection] = useState<MyPageSection>("overview");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [accountNameInput, setAccountNameInput] = useState("");
+  const [accountFirstNameInput, setAccountFirstNameInput] = useState("");
+  const [accountLastNameInput, setAccountLastNameInput] = useState("");
+  const [accountDateOfBirthInput, setAccountDateOfBirthInput] = useState("");
   const [displayNameInput, setDisplayNameInput] = useState("");
   const [accountMessage, setAccountMessage] = useState("");
   const [accountSaving, setAccountSaving] = useState(false);
@@ -144,10 +146,15 @@ export default function MyPage() {
         setBottleReferences(referencePrices);
         setWishlistEntries(wishlist);
         setCollectorNotes(notes);
-        const fallbackName = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
-        const nextName = fallbackName || user.displayName || user.email.split("@")[0] || "";
-        setAccountNameInput(nextName);
-        setDisplayNameInput(profileDisplayName || user.displayName || nextName);
+        const fallbackName = user.displayName || user.email.split("@")[0] || "";
+        const fallbackParts = fallbackName.split(/\s+/).filter(Boolean);
+        const nextFirstName = user.firstName || fallbackParts[0] || "";
+        const nextLastName = user.lastName || fallbackParts.slice(1).join(" ");
+        const fullName = [nextFirstName, nextLastName].filter(Boolean).join(" ");
+        setAccountFirstNameInput(nextFirstName);
+        setAccountLastNameInput(nextLastName);
+        setAccountDateOfBirthInput(user.dateOfBirth || "");
+        setDisplayNameInput(profileDisplayName || user.displayName || fullName || fallbackName);
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "Unable to load your portfolio.");
       } finally {
@@ -301,10 +308,14 @@ export default function MyPage() {
 
     try {
       const saved = await updateCurrentAccountProfile({
-        name: accountNameInput,
+        firstName: accountFirstNameInput,
+        lastName: accountLastNameInput,
+        dateOfBirth: accountDateOfBirthInput,
         displayName: displayNameInput,
       });
-      setAccountNameInput(saved.name);
+      setAccountFirstNameInput(saved.firstName);
+      setAccountLastNameInput(saved.lastName);
+      setAccountDateOfBirthInput(saved.dateOfBirth);
       setDisplayNameInput(saved.displayName);
       setAccountMessage(language === "kr" ? "계정 정보를 저장했습니다." : "Account settings saved.");
     } catch (nextError) {
@@ -872,16 +883,46 @@ export default function MyPage() {
 
                 <div className="grid gap-4 border-b border-[#eee9df] p-5 md:grid-cols-[180px_minmax(0,1fr)] md:items-center">
                   <label className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7a746b]">
-                    {language === "kr" ? "이름" : "Name"}
+                    First Name
                   </label>
                   <input
-                    value={accountNameInput}
+                    value={accountFirstNameInput}
                     onChange={(event) => {
-                      setAccountNameInput(event.target.value.slice(0, 60));
+                      setAccountFirstNameInput(event.target.value.slice(0, 40));
                       setAccountMessage("");
                     }}
                     className="w-full rounded-full border border-[#e2ddd3] bg-white px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#111111]"
-                    placeholder={language === "kr" ? "이름" : "Name"}
+                    placeholder="First Name"
+                  />
+                </div>
+
+                <div className="grid gap-4 border-b border-[#eee9df] p-5 md:grid-cols-[180px_minmax(0,1fr)] md:items-center">
+                  <label className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7a746b]">
+                    Last Name
+                  </label>
+                  <input
+                    value={accountLastNameInput}
+                    onChange={(event) => {
+                      setAccountLastNameInput(event.target.value.slice(0, 40));
+                      setAccountMessage("");
+                    }}
+                    className="w-full rounded-full border border-[#e2ddd3] bg-white px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#111111]"
+                    placeholder="Last Name"
+                  />
+                </div>
+
+                <div className="grid gap-4 border-b border-[#eee9df] p-5 md:grid-cols-[180px_minmax(0,1fr)] md:items-center">
+                  <label className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7a746b]">
+                    {language === "kr" ? "생년월일" : "Date of Birth"}
+                  </label>
+                  <input
+                    type="date"
+                    value={accountDateOfBirthInput}
+                    onChange={(event) => {
+                      setAccountDateOfBirthInput(event.target.value);
+                      setAccountMessage("");
+                    }}
+                    className="w-full rounded-full border border-[#e2ddd3] bg-white px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#111111]"
                   />
                 </div>
 
@@ -976,13 +1017,13 @@ export default function MyPage() {
                     {accountMessage ||
                       profileMessage ||
                       (language === "kr"
-                        ? "이름과 닉네임은 컬렉터 활동에 사용됩니다."
-                        : "Your name and nickname are used for collector activity.")}
+                        ? "이름, 생년월일, 닉네임은 계정과 컬렉터 활동에 사용됩니다."
+                        : "Your name, date of birth, and nickname are used for account and collector activity.")}
                   </p>
                   <button
                     type="button"
                     onClick={onSaveAccountSettings}
-                    disabled={accountSaving || accountNameInput.trim().length < 2 || displayNameInput.trim().length < 2}
+                    disabled={accountSaving || accountFirstNameInput.trim().length < 1 || displayNameInput.trim().length < 2}
                     className="inline-flex items-center justify-center rounded-full bg-[#111111] px-6 py-3 text-[10px] font-extrabold uppercase tracking-[0.18em] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#c9c1b7]"
                   >
                     {accountSaving ? (language === "kr" ? "저장 중" : "Saving") : language === "kr" ? "변경 저장" : "Save changes"}
