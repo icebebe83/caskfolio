@@ -261,6 +261,10 @@ export default function MyPage() {
       { referenceValueUsd: 0, gainValueUsd: 0 },
     );
   }, [bottleReferenceMap, listings]);
+  const portfolioReferenceGainPercent =
+    portfolioReferenceSummary.referenceValueUsd > 0
+      ? (portfolioReferenceSummary.gainValueUsd / portfolioReferenceSummary.referenceValueUsd) * 100
+      : 0;
   const activeListingCount = listings.filter((listing) => listing.status === "active").length;
   const featuredEntry = collectionEntries[0] ?? null;
   const recentEntries = collectionEntries.slice(1, 4);
@@ -483,7 +487,7 @@ export default function MyPage() {
           >
             {portfolioReferenceSummary.gainValueUsd >= 0 ? "▲" : "▼"}{" "}
             {portfolioReferenceSummary.gainValueUsd >= 0 ? "+" : "-"}
-            {formatUsd(Math.abs(portfolioReferenceSummary.gainValueUsd))}{" "}
+            {Math.abs(portfolioReferenceGainPercent).toFixed(1)}%{" "}
             <span className="text-[#7a746b]">
               {portfolioReferenceSummary.gainValueUsd >= 0
                 ? language === "kr"
