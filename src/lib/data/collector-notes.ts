@@ -104,6 +104,31 @@ export async function fetchAdminCollectorNotes(): Promise<CollectorNote[]> {
   }
 }
 
+export async function fetchCurrentUserCollectorNotes(): Promise<CollectorNote[]> {
+  assertSupabaseConfigured();
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
+
+  try {
+    const { data, error } = await supabase!
+      .from("collector_notes")
+      .select("*")
+      .eq("user_id", userId)
+      .neq("status", "hidden")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) {
+      if (isMissingCollectorNotesTable(error)) return [];
+      throw error;
+    }
+
+    return (data ?? []).map((row) => mapCollectorNoteRow(row));
+  } catch (error) {
+    if (isMissingCollectorNotesTable(error)) return [];
+    throw toSupabaseError(error, "Unable to load your collector notes.");
+  }
+}
+
 export async function findCollectorNoteQualifiedBottleId(bottleIds: string[]): Promise<string | null> {
   assertSupabaseConfigured();
   const userId = await getCurrentUserId();
