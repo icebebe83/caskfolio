@@ -19,13 +19,63 @@ import {
   fetchCurrentUserCollectorNotes,
   fetchWishlistBottles,
   signOutUser,
+  updateCurrentAccountProfile,
+  updateCurrentPassword,
   updateCurrentProfileDisplayName,
 } from "@/lib/data/store";
 import type { Bottle, BottleReferencePrice, CollectorNote, Listing, WishlistBottle } from "@/lib/types";
 
 const MY_COLLECTION_PAGE_SIZE = 8;
 type MyPageSection = "overview" | "collection" | "watchlist" | "notes" | "settings";
-type AccountSettingsTab = "profile" | "security" | "notifications";
+type MyPageIcon = MyPageSection | "logout";
+
+function MyPageNavIcon({ icon }: { icon: MyPageIcon }) {
+  const common = "h-5 w-5";
+  if (icon === "overview") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.9">
+        <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" />
+      </svg>
+    );
+  }
+  if (icon === "collection") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.9">
+        <path d="M10 3h4l1 5v11a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2V8l1-5z" />
+        <path d="M9 8h6M9 14h6" />
+      </svg>
+    );
+  }
+  if (icon === "watchlist") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.9">
+        <path d="M20.3 5.8a5 5 0 0 0-7.1 0L12 7l-1.2-1.2a5 5 0 1 0-7.1 7.1L12 21l8.3-8.1a5 5 0 0 0 0-7.1z" />
+      </svg>
+    );
+  }
+  if (icon === "notes") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.9">
+        <path d="M5 5h14v10H9l-4 4V5z" />
+        <path d="M8 9h8M8 12h5" />
+      </svg>
+    );
+  }
+  if (icon === "settings") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.9">
+        <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
+        <path d="M4 21a8 8 0 0 1 16 0" />
+      </svg>
+    );
+  }
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={common} fill="none" stroke="currentColor" strokeWidth="1.9">
+      <path d="M15 7l5 5-5 5M20 12H9" />
+      <path d="M11 4H5v16h6" />
+    </svg>
+  );
+}
 
 type CollectionEntry = {
   bottle: Bottle;
@@ -48,11 +98,18 @@ export default function MyPage() {
   const [error, setError] = useState("");
   const [collectionPage, setCollectionPage] = useState(1);
   const [activeSection, setActiveSection] = useState<MyPageSection>("overview");
-  const [accountTab, setAccountTab] = useState<AccountSettingsTab>("profile");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [accountNameInput, setAccountNameInput] = useState("");
   const [displayNameInput, setDisplayNameInput] = useState("");
+  const [accountMessage, setAccountMessage] = useState("");
+  const [accountSaving, setAccountSaving] = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
+  const [passwordEditorOpen, setPasswordEditorOpen] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordConfirmInput, setPasswordConfirmInput] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordSaving, setPasswordSaving] = useState(false);
 
   useEffect(() => {
     setHasHydrated(true);
@@ -87,13 +144,10 @@ export default function MyPage() {
         setBottleReferences(referencePrices);
         setWishlistEntries(wishlist);
         setCollectorNotes(notes);
-        setDisplayNameInput(
-          profileDisplayName ||
-            user.displayName ||
-            [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
-            user.email.split("@")[0] ||
-            "",
-        );
+        const fallbackName = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
+        const nextName = fallbackName || user.displayName || user.email.split("@")[0] || "";
+        setAccountNameInput(nextName);
+        setDisplayNameInput(profileDisplayName || user.displayName || nextName);
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "Unable to load your portfolio.");
       } finally {
@@ -232,6 +286,66 @@ export default function MyPage() {
     }
   };
 
+  const readableAccountError = (nextError: unknown, fallback: string) => {
+    if (nextError instanceof Error && nextError.message === "nickname-taken") {
+      return language === "kr" ? "이미 사용 중인 닉네임입니다." : "This nickname is already taken.";
+    }
+    return nextError instanceof Error ? nextError.message : fallback;
+  };
+
+  const onSaveAccountSettings = async () => {
+    if (accountSaving) return;
+    setAccountSaving(true);
+    setAccountMessage("");
+    setProfileMessage("");
+
+    try {
+      const saved = await updateCurrentAccountProfile({
+        name: accountNameInput,
+        displayName: displayNameInput,
+      });
+      setAccountNameInput(saved.name);
+      setDisplayNameInput(saved.displayName);
+      setAccountMessage(language === "kr" ? "계정 정보를 저장했습니다." : "Account settings saved.");
+    } catch (nextError) {
+      setAccountMessage(
+        readableAccountError(
+          nextError,
+          language === "kr" ? "계정 정보를 저장할 수 없습니다." : "Unable to save account settings.",
+        ),
+      );
+    } finally {
+      setAccountSaving(false);
+    }
+  };
+
+  const onSavePassword = async () => {
+    if (passwordSaving) return;
+    setPasswordSaving(true);
+    setPasswordMessage("");
+
+    try {
+      await updateCurrentPassword({
+        password: passwordInput,
+        passwordConfirm: passwordConfirmInput,
+      });
+      setPasswordInput("");
+      setPasswordConfirmInput("");
+      setPasswordEditorOpen(false);
+      setPasswordMessage(language === "kr" ? "비밀번호를 변경했습니다." : "Password updated.");
+    } catch (nextError) {
+      setPasswordMessage(
+        nextError instanceof Error
+          ? nextError.message
+          : language === "kr"
+            ? "비밀번호를 변경할 수 없습니다."
+            : "Unable to update password.",
+      );
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
   if (!isBackendConfigured) {
     return (
       <div className="space-y-6">
@@ -300,33 +414,37 @@ export default function MyPage() {
   const sidebar = (
     <aside className="flex h-full flex-col justify-between">
       <div>
-        <p className="mb-5 text-[10px] font-bold uppercase tracking-[0.32em] text-[#8b5a34]">
+        <p className="mb-8 px-2 text-[11px] font-black uppercase tracking-[0.32em] text-[#8b5a34]">
           {language === "kr" ? "마이페이지" : "My Page"}
         </p>
-        <nav className="space-y-1">
+        <nav className="space-y-2">
           {navItems.map((item) => (
             <button
               key={item.id}
               type="button"
               onClick={() => selectSection(item.id)}
-              className={`flex w-full items-center justify-between rounded-full px-4 py-3 text-left text-xs font-bold uppercase tracking-[0.16em] transition ${
+              className={`flex w-full items-center gap-4 rounded-[0.35rem] px-4 py-4 text-left text-[12px] font-black uppercase tracking-[0.2em] transition ${
                 activeSection === item.id
-                  ? "bg-[#111111] text-white"
-                  : "text-[#7a746b] hover:bg-[#f4f1eb] hover:text-[#111111]"
+                  ? "bg-[#f3eee6] text-[#8b5a34] shadow-[0_10px_28px_rgba(100,74,44,0.08)]"
+                  : "text-[#151515] hover:bg-[#f7f4ef] hover:text-[#8b5a34]"
               }`}
             >
-              {item.label}
+              <span className={activeSection === item.id ? "text-[#8b5a34]" : "text-[#5f5a53]"}>
+                <MyPageNavIcon icon={item.id} />
+              </span>
+              <span>{item.label}</span>
             </button>
           ))}
         </nav>
       </div>
-      <div className="mt-10 border-t border-[#e9e4da] pt-5">
+      <div className="mt-10 border-t border-[#e3ded5] pt-8">
         <button
           type="button"
           onClick={onLogout}
-          className="w-full px-4 py-3 text-left text-xs font-bold uppercase tracking-[0.16em] text-[#9a9287] transition hover:text-[#111111]"
+          className="flex w-full items-center gap-4 rounded-[0.35rem] px-4 py-4 text-left text-[12px] font-black uppercase tracking-[0.2em] text-[#7a746b] transition hover:bg-[#f7f4ef] hover:text-[#111111]"
         >
-          Logout
+          <MyPageNavIcon icon="logout" />
+          <span>Logout</span>
         </button>
       </div>
     </aside>
@@ -501,7 +619,7 @@ export default function MyPage() {
         </div>
       ) : null}
 
-      <div className="grid gap-10 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <div className="grid gap-10 lg:grid-cols-[280px_minmax(0,1fr)]">
         <div className="hidden lg:block">
           <div className="sticky top-28 rounded-[1.75rem] border border-[#e9e4da] bg-white/75 p-5">
             {sidebar}
@@ -735,74 +853,142 @@ export default function MyPage() {
                   {language === "kr" ? "계정 설정" : "Account Settings"}
                 </h1>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {(["profile", "security", "notifications"] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setAccountTab(tab)}
-                    className={`rounded-full border px-4 py-2 text-[10px] font-bold uppercase tracking-[0.18em] transition ${
-                      accountTab === tab
-                        ? "border-[#111111] bg-[#111111] text-white"
-                        : "border-[#e2ddd3] bg-white text-[#7a746b] hover:border-[#111111] hover:text-[#111111]"
-                    }`}
-                  >
-                    {tab}
-                  </button>
-                ))}
-              </div>
-              {accountTab === "profile" ? (
-                <div className="rounded-[1.5rem] border border-[#e9e4da] bg-white p-5">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[#7a746b]">
-                    {language === "kr" ? "컬렉터 닉네임" : "Collector nickname"}
-                  </p>
-                  <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-                    <input
-                      value={displayNameInput}
-                      onChange={(event) => {
-                        setDisplayNameInput(event.target.value.slice(0, 32));
-                        setProfileMessage("");
-                      }}
-                      className="w-full rounded-full border border-[#e2ddd3] bg-white px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#111111]"
-                      placeholder={language === "kr" ? "중복되지 않는 닉네임" : "Unique collector nickname"}
-                    />
-                    <button
-                      type="button"
-                      onClick={onSaveDisplayName}
-                      disabled={profileSaving || displayNameInput.trim().length < 2}
-                      className="inline-flex items-center justify-center rounded-full bg-[#111111] px-5 py-3 text-[10px] font-extrabold uppercase tracking-[0.18em] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#c9c1b7]"
-                    >
-                      {profileSaving ? (language === "kr" ? "저장 중" : "Saving") : language === "kr" ? "저장" : "Save"}
-                    </button>
+              <div className="rounded-[1.5rem] border border-[#e9e4da] bg-white">
+                <div className="grid gap-4 border-b border-[#eee9df] p-5 md:grid-cols-[180px_minmax(0,1fr)] md:items-center">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7a746b]">
+                      {language === "kr" ? "이메일 주소" : "Email address"}
+                    </p>
+                    <p className="mt-1 text-xs text-[#9a9287]">
+                      {language === "kr" ? "수정할 수 없습니다." : "Cannot be edited."}
+                    </p>
                   </div>
-                  <p className="mt-3 text-xs text-[#7a746b]">
-                    {profileMessage ||
+                  <input
+                    value={user.email}
+                    readOnly
+                    className="w-full rounded-full border border-[#e2ddd3] bg-[#f7f4ef] px-4 py-3 text-sm text-[#7a746b] outline-none"
+                  />
+                </div>
+
+                <div className="grid gap-4 border-b border-[#eee9df] p-5 md:grid-cols-[180px_minmax(0,1fr)] md:items-center">
+                  <label className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7a746b]">
+                    {language === "kr" ? "이름" : "Name"}
+                  </label>
+                  <input
+                    value={accountNameInput}
+                    onChange={(event) => {
+                      setAccountNameInput(event.target.value.slice(0, 60));
+                      setAccountMessage("");
+                    }}
+                    className="w-full rounded-full border border-[#e2ddd3] bg-white px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#111111]"
+                    placeholder={language === "kr" ? "이름" : "Name"}
+                  />
+                </div>
+
+                <div className="grid gap-4 border-b border-[#eee9df] p-5 md:grid-cols-[180px_minmax(0,1fr)] md:items-center">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7a746b]">
+                      {language === "kr" ? "닉네임" : "Nickname"}
+                    </p>
+                    <p className="mt-1 text-xs text-[#9a9287]">
+                      {language === "kr" ? "컬렉터 노트에 표시됩니다." : "Shown on Collector Notes."}
+                    </p>
+                  </div>
+                  <input
+                    value={displayNameInput}
+                    onChange={(event) => {
+                      setDisplayNameInput(event.target.value.slice(0, 32));
+                      setAccountMessage("");
+                      setProfileMessage("");
+                    }}
+                    className="w-full rounded-full border border-[#e2ddd3] bg-white px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#111111]"
+                    placeholder={language === "kr" ? "중복되지 않는 닉네임" : "Unique collector nickname"}
+                  />
+                </div>
+
+                <div className="border-b border-[#eee9df] p-5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPasswordEditorOpen((current) => !current);
+                      setPasswordMessage("");
+                    }}
+                    className="grid w-full gap-4 text-left md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-center"
+                  >
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7a746b]">
+                        {language === "kr" ? "비밀번호" : "Password"}
+                      </p>
+                      <p className="mt-1 text-xs text-[#9a9287]">
+                        {language === "kr" ? "변경하려면 클릭하세요." : "Click to change."}
+                      </p>
+                    </div>
+                    <div className="rounded-full border border-[#e2ddd3] bg-[#f7f4ef] px-4 py-3 text-sm text-[#7a746b]">
+                      ••••••••
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-[0.18em] text-[#8b5a34]">
+                      {passwordEditorOpen ? "Close" : "Change"}
+                    </span>
+                  </button>
+
+                  {passwordEditorOpen ? (
+                    <div className="mt-5 grid gap-3 border-t border-[#eee9df] pt-5 md:grid-cols-2">
+                      <input
+                        type="password"
+                        value={passwordInput}
+                        onChange={(event) => {
+                          setPasswordInput(event.target.value);
+                          setPasswordMessage("");
+                        }}
+                        className="w-full rounded-full border border-[#e2ddd3] bg-white px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#111111]"
+                        placeholder={language === "kr" ? "새 비밀번호" : "New password"}
+                      />
+                      <input
+                        type="password"
+                        value={passwordConfirmInput}
+                        onChange={(event) => {
+                          setPasswordConfirmInput(event.target.value);
+                          setPasswordMessage("");
+                        }}
+                        className="w-full rounded-full border border-[#e2ddd3] bg-white px-4 py-3 text-sm text-[#111111] outline-none transition focus:border-[#111111]"
+                        placeholder={language === "kr" ? "비밀번호 확인" : "Confirm password"}
+                      />
+                      <div className="md:col-span-2">
+                        <button
+                          type="button"
+                          onClick={onSavePassword}
+                          disabled={passwordSaving || passwordInput.length < 6 || passwordConfirmInput.length < 6}
+                          className="inline-flex items-center justify-center rounded-full bg-[#111111] px-5 py-3 text-[10px] font-extrabold uppercase tracking-[0.18em] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#c9c1b7]"
+                        >
+                          {passwordSaving ? (language === "kr" ? "변경 중" : "Updating") : language === "kr" ? "비밀번호 변경" : "Update password"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {passwordMessage ? (
+                    <p className="mt-3 text-xs text-[#7a746b]">{passwordMessage}</p>
+                  ) : null}
+                </div>
+
+                <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-[#7a746b]">
+                    {accountMessage ||
+                      profileMessage ||
                       (language === "kr"
-                        ? "Collector Notes 작성자명으로 사용됩니다. 다른 유저와 같은 닉네임은 사용할 수 없습니다."
-                        : "Used as your Collector Notes display name. Nicknames must be unique.")}
+                        ? "이름과 닉네임은 컬렉터 활동에 사용됩니다."
+                        : "Your name and nickname are used for collector activity.")}
                   </p>
+                  <button
+                    type="button"
+                    onClick={onSaveAccountSettings}
+                    disabled={accountSaving || accountNameInput.trim().length < 2 || displayNameInput.trim().length < 2}
+                    className="inline-flex items-center justify-center rounded-full bg-[#111111] px-6 py-3 text-[10px] font-extrabold uppercase tracking-[0.18em] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#c9c1b7]"
+                  >
+                    {accountSaving ? (language === "kr" ? "저장 중" : "Saving") : language === "kr" ? "변경 저장" : "Save changes"}
+                  </button>
                 </div>
-              ) : null}
-              {accountTab === "security" ? (
-                <div className="grid gap-4 md:grid-cols-3">
-                  {["Change password", "Password reset", "Account security settings"].map((item) => (
-                    <div key={item} className="rounded-[1.5rem] border border-[#e9e4da] bg-white p-5">
-                      <p className="text-sm font-bold text-[#111111]">{item}</p>
-                      <p className="mt-2 text-xs leading-5 text-[#7a746b]">Managed through secure account authentication.</p>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              {accountTab === "notifications" ? (
-                <div className="grid gap-4 md:grid-cols-3">
-                  {["Email notifications", "Market alerts", "Watchlist alerts"].map((item) => (
-                    <div key={item} className="rounded-[1.5rem] border border-[#e9e4da] bg-white p-5">
-                      <p className="text-sm font-bold text-[#111111]">{item}</p>
-                      <p className="mt-2 text-xs leading-5 text-[#7a746b]">Notification controls will live here.</p>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
+              </div>
             </section>
           ) : null}
         </main>

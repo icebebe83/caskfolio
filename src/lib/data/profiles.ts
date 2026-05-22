@@ -81,3 +81,50 @@ export async function updateCurrentProfileDisplayName(displayName: string): Prom
 
   return normalizedDisplayName;
 }
+
+export async function updateCurrentAccountProfile(input: {
+  name: string;
+  displayName: string;
+}): Promise<{ name: string; displayName: string }> {
+  assertSupabaseConfigured();
+  const normalizedName = input.name.trim().replace(/\s+/g, " ").slice(0, 60);
+  const normalizedDisplayName = normalizeDisplayName(input.displayName);
+
+  if (normalizedName.length < 2) {
+    throw new Error("Name must be at least 2 characters.");
+  }
+  if (normalizedDisplayName.length < 2) {
+    throw new Error("Nickname must be at least 2 characters.");
+  }
+
+  const { error: authError } = await supabase!.auth.updateUser({
+    data: {
+      first_name: normalizedName,
+      last_name: "",
+      full_name: normalizedName,
+    },
+  });
+  if (authError) throw toSupabaseError(authError, "Unable to save profile name.");
+
+  const savedDisplayName = await updateCurrentProfileDisplayName(normalizedDisplayName);
+  return { name: normalizedName, displayName: savedDisplayName };
+}
+
+export async function updateCurrentPassword(input: {
+  password: string;
+  passwordConfirm: string;
+}): Promise<void> {
+  assertSupabaseConfigured();
+  const password = input.password.trim();
+  const passwordConfirm = input.passwordConfirm.trim();
+
+  if (password.length < 6) {
+    throw new Error("Password must be at least 6 characters.");
+  }
+  if (password !== passwordConfirm) {
+    throw new Error("Passwords do not match.");
+  }
+
+  const { error } = await supabase!.auth.updateUser({ password });
+  if (error) throw toSupabaseError(error, "Unable to update password.");
+}
