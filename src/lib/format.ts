@@ -1,4 +1,4 @@
-import { ETC_CATEGORIES } from "@/lib/constants";
+import { BOTTLE_LABEL_VERSION_OPTIONS, ETC_CATEGORIES } from "@/lib/constants";
 import type { AppDateValue, Bottle, Listing, MessengerType, SpiritCategory } from "@/lib/types";
 
 export function toDate(value: AppDateValue): Date | null {
@@ -130,6 +130,46 @@ export function buildMessengerLink(type: MessengerType, handle: string): string 
 
 export function formatCategoryLabel(category: SpiritCategory): string {
   return ETC_CATEGORIES.includes(category) ? "Etc" : category;
+}
+
+export function parseBottleBatchMetadata(batch: string): {
+  batch: string;
+  labelVersion: string;
+} {
+  const trimmedBatch = batch.trim();
+  const labelOptions = BOTTLE_LABEL_VERSION_OPTIONS.filter(Boolean);
+  const matchedLabel = labelOptions.find((option) => {
+    const escapedOption = option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|\\s*[·,/-]\\s*)${escapedOption}$`, "i").test(trimmedBatch);
+  });
+
+  if (!matchedLabel) {
+    return { batch: trimmedBatch, labelVersion: "" };
+  }
+
+  const escapedLabel = matchedLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const batchWithoutLabel = trimmedBatch
+    .replace(new RegExp(`\\s*[·,/-]\\s*${escapedLabel}$`, "i"), "")
+    .replace(new RegExp(`^${escapedLabel}$`, "i"), "")
+    .trim();
+
+  return {
+    batch: batchWithoutLabel,
+    labelVersion: matchedLabel,
+  };
+}
+
+export function composeBottleBatchMetadata(batch: string, labelVersion: string): string {
+  const trimmedBatch = batch.trim();
+  const trimmedLabelVersion = labelVersion.trim();
+
+  if (!trimmedLabelVersion) return trimmedBatch;
+  if (!trimmedBatch) return trimmedLabelVersion;
+  if (trimmedBatch.toLowerCase().includes(trimmedLabelVersion.toLowerCase())) {
+    return trimmedBatch;
+  }
+
+  return `${trimmedBatch} · ${trimmedLabelVersion}`;
 }
 
 export function bottleSearchText(bottle: Bottle): string {

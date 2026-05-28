@@ -2,7 +2,7 @@
 
 import { useDeferredValue, useEffect, useState, type ReactNode } from "react";
 
-import { bottleSearchText } from "@/lib/format";
+import { bottleSearchText, parseBottleBatchMetadata } from "@/lib/format";
 import type { Bottle } from "@/lib/types";
 
 export function BottleSelector({
@@ -29,12 +29,8 @@ export function BottleSelector({
   const deferredQuery = useDeferredValue(resolvedQuery);
 
   useEffect(() => {
-    if (selectedBottle) {
-      if (onQueryChange) {
-        onQueryChange(selectedBottle.name);
-      } else {
-        setInternalQuery(selectedBottle.name);
-      }
+    if (selectedBottle && !onQueryChange) {
+      setInternalQuery(selectedBottle.name);
     }
   }, [onQueryChange, selectedBottle]);
 
@@ -60,27 +56,39 @@ export function BottleSelector({
         className="field w-full"
       />
       <div className="max-h-72 space-y-2 overflow-y-auto rounded-2xl border border-[#e2ddd3] bg-[#f5f2ec] p-2">
-        {filtered.map((bottle) => (
-          <button
-            key={bottle.id}
-            type="button"
-            onClick={() => onSelect(bottle)}
-            className={`w-full rounded-2xl px-4 py-3 text-left transition ${
-              selectedBottle?.id === bottle.id
-                ? "bg-[#171717] text-white"
-                : "bg-white text-ink hover:bg-[#fcfbf8]"
-            }`}
-          >
-            <p className="font-medium">{bottle.name}</p>
-            <p
-              className={`text-xs uppercase tracking-[0.18em] ${
-                selectedBottle?.id === bottle.id ? "text-shell/70" : "text-ink/45"
+        {filtered.map((bottle) => {
+          const batchMetadata = parseBottleBatchMetadata(bottle.batch);
+          const metadata = [
+            bottle.brand,
+            bottle.category,
+            batchMetadata.batch,
+            batchMetadata.labelVersion ? `Label: ${batchMetadata.labelVersion}` : "",
+          ]
+            .filter(Boolean)
+            .join(" · ");
+
+          return (
+            <button
+              key={bottle.id}
+              type="button"
+              onClick={() => onSelect(bottle)}
+              className={`w-full rounded-2xl px-4 py-3 text-left transition ${
+                selectedBottle?.id === bottle.id
+                  ? "bg-[#171717] text-white"
+                  : "bg-white text-ink hover:bg-[#fcfbf8]"
               }`}
             >
-              {[bottle.brand, bottle.category, bottle.batch].filter(Boolean).join(" · ")}
-            </p>
-          </button>
-        ))}
+              <p className="font-medium">{bottle.name}</p>
+              <p
+                className={`text-xs uppercase tracking-[0.18em] ${
+                  selectedBottle?.id === bottle.id ? "text-shell/70" : "text-ink/45"
+                }`}
+              >
+                {metadata}
+              </p>
+            </button>
+          );
+        })}
         {!filtered.length ? (
           <div className="space-y-3 px-2 py-3">
             <p className="text-sm text-ink/50">

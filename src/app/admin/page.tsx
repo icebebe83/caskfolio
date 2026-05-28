@@ -12,6 +12,7 @@ import {
   runReferenceSyncAction,
 } from "@/lib/admin/actions";
 import { useAuth } from "@/components/providers";
+import { BOTTLE_LABEL_VERSION_OPTIONS } from "@/lib/constants";
 import {
   ADMIN_NAV_ITEMS,
   createBannerDraft,
@@ -28,7 +29,7 @@ import {
   getAdminUserMeta,
   getBannerListLabel,
 } from "@/lib/admin/dto";
-import { formatDate } from "@/lib/format";
+import { composeBottleBatchMetadata, formatDate, parseBottleBatchMetadata } from "@/lib/format";
 import { isBackendConfigured } from "@/lib/backend/client";
 import {
   hasListingUploadedImage,
@@ -462,7 +463,7 @@ export default function AdminPage() {
         name: bottleDraft.name,
         brand: bottleDraft.brand,
         category: bottleDraft.category,
-        batch: bottleDraft.batch,
+        batch: composeBottleBatchMetadata(bottleDraft.batch, bottleDraft.labelVersion),
         abv: Number(bottleDraft.abv || 0),
         volumeMl: Number(bottleDraft.volumeMl || 750),
         aliases: bottleDraft.aliases
@@ -1154,6 +1155,8 @@ export default function AdminPage() {
                 <th className="px-6 py-4 font-medium">Name</th>
                 <th className="px-6 py-4 font-medium">Brand</th>
                 <th className="px-6 py-4 font-medium">Category</th>
+                <th className="px-6 py-4 font-medium">Batch</th>
+                <th className="px-6 py-4 font-medium">Label</th>
                 <th className="px-6 py-4 font-medium">Global</th>
                 <th className="px-6 py-4 font-medium">Image</th>
                 <th className="px-6 py-4 font-medium">Updated</th>
@@ -1163,6 +1166,7 @@ export default function AdminPage() {
               {filteredBottles.map((bottle) => {
                 const reference = bottleReferenceMap.get(bottle.id);
                 const hasImage = bottleHasAnyImage(bottle);
+                const batchMetadata = parseBottleBatchMetadata(bottle.batch);
                 return (
                   <tr
                     key={bottle.id}
@@ -1176,6 +1180,8 @@ export default function AdminPage() {
                     </td>
                     <td className="px-6 py-4 text-ink/70">{bottle.brand || "—"}</td>
                     <td className="px-6 py-4 text-ink/70">{bottle.category}</td>
+                    <td className="px-6 py-4 text-ink/70">{batchMetadata.batch || "—"}</td>
+                    <td className="px-6 py-4 text-ink/70">{batchMetadata.labelVersion || "—"}</td>
                     <td className="px-6 py-4">
                       <span
                         className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
@@ -1204,7 +1210,7 @@ export default function AdminPage() {
               })}
               {!filteredBottles.length ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-sm text-ink/60">
+                  <td colSpan={8} className="px-6 py-8 text-center text-sm text-ink/60">
                     No bottles match the current filter.
                   </td>
                 </tr>
@@ -1261,6 +1267,21 @@ export default function AdminPage() {
                   onChange={(event) => setBottleDraft((current) => ({ ...current, batch: event.target.value }))}
                   className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm"
                 />
+              </div>
+              <div>
+                <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-ink/45">Label version</label>
+                <select
+                  value={bottleDraft.labelVersion}
+                  onChange={(event) => setBottleDraft((current) => ({ ...current, labelVersion: event.target.value }))}
+                  className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm"
+                >
+                  <option value="">Not specified</option>
+                  {BOTTLE_LABEL_VERSION_OPTIONS.filter(Boolean).map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-ink/45">ABV</label>

@@ -6,6 +6,13 @@ type WebhookPayload = {
   old_record?: Record<string, unknown> | null;
 };
 
+declare const Deno: {
+  env: {
+    get(key: string): string | undefined;
+  };
+  serve(handler: (request: Request) => Response | Promise<Response>): void;
+};
+
 const TELEGRAM_CHAT_ID = "1007112216";
 const WEBHOOK_SECRET_HEADER = "x-webhook-secret";
 

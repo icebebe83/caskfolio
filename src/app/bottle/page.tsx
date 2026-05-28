@@ -11,7 +11,15 @@ import { useAuth, useLanguage } from "@/components/providers";
 import { getEquivalentBottleGroup } from "@/lib/bottle-identity";
 import { getBottleImageForSurface, getListingImageForSurface } from "@/lib/media/images";
 import { resolveUsdKrwRate } from "@/lib/fx";
-import { formatCategoryLabel, formatKrw, formatListingStatus, formatUsd, median, toDate } from "@/lib/format";
+import {
+  formatCategoryLabel,
+  formatKrw,
+  formatListingStatus,
+  formatUsd,
+  median,
+  parseBottleBatchMetadata,
+  toDate,
+} from "@/lib/format";
 import { isBackendConfigured } from "@/lib/backend/client";
 import {
   createCollectorNote,
@@ -28,7 +36,7 @@ import {
   setBottleWishlist,
   updateCollectorNoteContent,
 } from "@/lib/data/store";
-import { formatUiDate, tStatus } from "@/lib/i18n";
+import { formatUiDate, tLabelVersion, tStatus } from "@/lib/i18n";
 import type { Bottle, BottleReferencePrice, CollectorNote, Listing } from "@/lib/types";
 
 function formatPercentChange(value: number): string {
@@ -456,6 +464,7 @@ function BottlePageContent() {
       ? firstRegisteredListingImage || getBottleImageForSurface(bottle, "detail-hero")
       : "";
   const visibleRecentListings = showAllRecentListings ? sortedListings : sortedListings.slice(0, 4);
+  const bottleBatchMetadata = parseBottleBatchMetadata(bottle?.batch ?? "");
 
   return (
     <div className="space-y-20 pb-20">
@@ -527,7 +536,17 @@ function BottlePageContent() {
                 {language === "kr" ? "배치" : "Batch"}
               </span>
               <span className="block text-sm font-semibold text-[#111111]">
-                {bottle?.batch || (language === "kr" ? "미설정" : "Not set")}
+                {bottleBatchMetadata.batch || (language === "kr" ? "미설정" : "Not set")}
+              </span>
+            </div>
+            <div>
+              <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.22em] text-[#7b746a]">
+                {language === "kr" ? "라벨 버전" : "Label version"}
+              </span>
+              <span className="block text-sm font-semibold text-[#111111]">
+                {bottleBatchMetadata.labelVersion
+                  ? tLabelVersion(language, bottleBatchMetadata.labelVersion)
+                  : language === "kr" ? "미설정" : "Not set"}
               </span>
             </div>
             <div>

@@ -1,4 +1,4 @@
-import { formatDate } from "@/lib/format";
+import { formatDate, parseBottleBatchMetadata } from "@/lib/format";
 import type {
   AdminDashboardMetrics,
   AdminProfileSummary,
@@ -64,6 +64,7 @@ export type AdminBottleDraft = {
   brand: string;
   category: SpiritCategory;
   batch: string;
+  labelVersion: string;
   abv: string;
   volumeMl: string;
   aliases: string;
@@ -164,6 +165,7 @@ export function createEmptyBottleDraft(): AdminBottleDraft {
     brand: "",
     category: "Whisky",
     batch: "",
+    labelVersion: "",
     abv: "",
     volumeMl: "750",
     aliases: "",
@@ -173,11 +175,14 @@ export function createEmptyBottleDraft(): AdminBottleDraft {
 }
 
 export function createBottleDraft(bottle: Bottle): AdminBottleDraft {
+  const batchMetadata = parseBottleBatchMetadata(bottle.batch);
+
   return {
     name: bottle.name,
     brand: bottle.brand,
     category: bottle.category,
-    batch: bottle.batch,
+    batch: batchMetadata.batch,
+    labelVersion: batchMetadata.labelVersion,
     abv: String(bottle.abv || ""),
     volumeMl: String(bottle.volumeMl || 750),
     aliases: bottle.aliases.join(", "),

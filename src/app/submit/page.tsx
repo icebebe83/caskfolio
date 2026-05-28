@@ -36,6 +36,20 @@ function normalizeBottleLookupText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+type RequiredBottleField = "brand" | "abv" | "volume";
+
+function getMissingBottleFields(
+  bottle: Pick<Bottle, "brand" | "abv" | "volumeMl"> | null,
+): RequiredBottleField[] {
+  if (!bottle) return [];
+
+  const missingFields: RequiredBottleField[] = [];
+  if (!bottle.brand.trim()) missingFields.push("brand");
+  if (!Number(bottle.abv || 0)) missingFields.push("abv");
+  if (!Number(bottle.volumeMl || 0)) missingFields.push("volume");
+  return missingFields;
+}
+
 type SubmitStage =
   | "loading-archive"
   | "creating-bottle"
@@ -317,6 +331,46 @@ export default function SubmitPage() {
     );
   };
 
+  const focusFirstMissingBottleField = (missingFields: Set<string>) => {
+    window.setTimeout(() => {
+      const firstField = missingFields.has("brand")
+        ? fieldIds.newBrand
+        : missingFields.has("abv")
+          ? fieldIds.newAbv
+          : missingFields.has("volume")
+            ? fieldIds.newVolume
+            : fieldIds.newBrand;
+      document.getElementById(firstField)?.focus();
+    }, 0);
+  };
+
+  const openBottleCompletionForm = (bottle: Bottle) => {
+    const missingFields = new Set(getMissingBottleFields(bottle));
+
+    setSelectedBottle(null);
+    setBottleQuery(bottle.name);
+    setIsCreatingBottle(true);
+    setNewBottleCategory(bottle.category);
+    setNewBottleName(sanitizeEnglishBottleText(bottle.name));
+    setNewBottleBrand(sanitizeEnglishBottleText(bottle.brand));
+    setNewBottleBatch(bottle.batch);
+    setNewBottleAgeStatement(bottle.ageStatement || "NAS");
+    setNewBottleAbv(bottle.abv ? String(bottle.abv) : "");
+    setNewBottleVolumeMl(bottle.volumeMl ? String(bottle.volumeMl) : "750");
+    setInvalidBottleFields(missingFields);
+    setAutofillStatus(
+      language === "kr"
+        ? "부족한 바틀 정보만 채우면 바로 등록할 수 있습니다."
+        : "Fill the missing bottle details to publish this listing.",
+    );
+    setError(
+      language === "kr"
+        ? "선택한 바틀에 일부 정보가 부족해서 보완 입력란을 열었습니다. 필요한 값만 입력한 뒤 다시 등록해주세요."
+        : "This bottle is missing a few details. Fill the highlighted fields, then publish again.",
+    );
+    focusFirstMissingBottleField(missingFields);
+  };
+
   const findMatchingBottleVariant = (
     sourceBottle: Pick<Bottle, "name" | "brand" | "category" | "abv" | "volumeMl">,
     batch: string,
@@ -373,10 +427,12 @@ export default function SubmitPage() {
       return;
     }
 
-    const exactQueryMatch = bottles.find(
-      (bottle) => normalizeBottleLookupText(bottle.name) === normalizeBottleLookupText(bottleQuery),
-    );
-    const currentBottle = selectedBottle ?? exactQueryMatch ?? null;
+    const exactQueryMatch = !isCreatingBottle
+      ? bottles.find(
+          (bottle) => normalizeBottleLookupText(bottle.name) === normalizeBottleLookupText(bottleQuery),
+        )
+      : null;
+    const currentBottle = !isCreatingBottle ? selectedBottle ?? exactQueryMatch ?? null : null;
 
     if (!currentBottle && !isCreatingBottle && pendingBottleName) {
       setIsCreatingBottle(true);
@@ -403,24 +459,13 @@ export default function SubmitPage() {
             ? "브랜드, ABV, 용량을 모두 입력해야 등록할 수 있습니다."
             : "Brand, ABV, and volume are required before publishing.",
         );
-        window.setTimeout(() => {
-          const firstField = missingFields.has("brand")
-            ? fieldIds.newBrand
-            : missingFields.has("abv")
-              ? fieldIds.newAbv
-              : fieldIds.newVolume;
-          document.getElementById(firstField)?.focus();
-        }, 0);
+        focusFirstMissingBottleField(missingFields);
         return;
       }
     }
 
-    if (currentBottle && (!currentBottle.brand.trim() || !currentBottle.abv || !currentBottle.volumeMl)) {
-      setError(
-        language === "kr"
-          ? "선택한 바틀에 브랜드, ABV, 용량 정보가 부족합니다. 새 바틀로 등록 정보를 보완해주세요."
-          : "The selected bottle is missing brand, ABV, or volume. Create a complete bottle entry instead.",
-      );
+    if (currentBottle && getMissingBottleFields(currentBottle).length) {
+      openBottleCompletionForm(currentBottle);
       return;
     }
 
@@ -448,12 +493,13 @@ export default function SubmitPage() {
         setFxStatus(fxState.label);
 
         const normalizedQuery = bottleQuery.trim().toLowerCase();
-        let bottle =
-          selectedBottle ??
-          bottles.find((item) => item.name.trim().toLowerCase() === normalizedQuery) ??
-          null;
+        let bottle = !isCreatingBottle
+          ? selectedBottle ??
+            bottles.find((item) => item.name.trim().toLowerCase() === normalizedQuery) ??
+            null
+          : null;
         let createdBottle = false;
-        const shouldCreateBottle = !bottle && (isCreatingBottle || Boolean(pendingBottleName));
+        const shouldCreateBottle = isCreatingBottle || (!bottle && Boolean(pendingBottleName));
 
         if (bottle && !selectedBottle) {
           setSelectedBottle(bottle);
@@ -698,6 +744,16 @@ export default function SubmitPage() {
     );
   }
 
+  const selectedBottleMissingFields =
+    selectedBottle && !isCreatingBottle ? getMissingBottleFields(selectedBottle) : [];
+  const selectedBottleMissingFieldText = selectedBottleMissingFields
+    .map((field) => {
+      if (field === "brand") return language === "kr" ? "브랜드" : "brand";
+      if (field === "abv") return "ABV";
+      return language === "kr" ? "용량" : "volume";
+    })
+    .join(language === "kr" ? ", " : ", ");
+
   return (
     <div className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
       <section className="panel p-6">
@@ -724,10 +780,12 @@ export default function SubmitPage() {
                 setBottleQuery(bottle.name);
                 setIsCreatingBottle(false);
                 setAutofillStatus("");
+                setError("");
               }}
               query={bottleQuery}
               onQueryChange={(query) => {
                 setBottleQuery(query);
+                setError("");
                 const exactMatch = bottles.find(
                   (bottle) => normalizeBottleLookupText(bottle.name) === normalizeBottleLookupText(query),
                 );
@@ -744,6 +802,7 @@ export default function SubmitPage() {
                       setNewBottleName(nextName);
                       setNewBottleBrand("");
                       setInvalidBottleFields(new Set());
+                      setError("");
                       applyBottleAutofill(findBottleAutofillMatch(nextName));
                     }}
                     className="button-secondary px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50"
@@ -757,6 +816,22 @@ export default function SubmitPage() {
               <p className={`mt-2 text-xs leading-5 ${archiveError ? "text-red-600" : "text-ink/55"}`}>
                 {archiveStatus}
               </p>
+            ) : null}
+            {selectedBottleMissingFields.length ? (
+              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-sm font-medium text-amber-950">
+                  {language === "kr"
+                    ? `이 바틀은 ${selectedBottleMissingFieldText} 정보가 필요합니다.`
+                    : `This bottle needs ${selectedBottleMissingFieldText} before publishing.`}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => selectedBottle && openBottleCompletionForm(selectedBottle)}
+                  className="mt-3 button-secondary px-4 py-2"
+                >
+                  {language === "kr" ? "부족한 정보 입력" : "Complete bottle details"}
+                </button>
+              </div>
             ) : null}
           </div>
 
