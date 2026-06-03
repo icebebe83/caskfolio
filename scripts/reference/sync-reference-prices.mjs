@@ -123,6 +123,151 @@ function extractYearTokens(value = "") {
   return [...String(value).matchAll(/\b(19|20)\d{2}\b/g)].map((match) => Number(match[0]));
 }
 
+function uniqueNumbers(values) {
+  return [...new Set(values.filter((value) => Number.isFinite(value)))];
+}
+
+function extractAgeNumbers(value = "") {
+  const text = String(value);
+  const explicitAges = [
+    ...text.matchAll(/\b(\d{1,3})\s*(?:yo|yr|yrs|year|years)\b/gi),
+  ].map((match) => Number(match[1]));
+  const standaloneAge =
+    /^\s*\d{1,3}\s*$/.test(text) ? [Number(text.trim())] : [];
+  return uniqueNumbers([...explicitAges, ...standaloneAge]);
+}
+
+function getBottleAgeNumbers(bottle) {
+  return uniqueNumbers(
+    [
+      bottle.name,
+      bottle.line,
+      bottle.batch,
+      bottle.age_statement,
+    ].flatMap((value) => extractAgeNumbers(value)),
+  );
+}
+
+function getCandidateAgeNumbers(candidateText) {
+  return extractAgeNumbers(candidateText);
+}
+
+function getBottleReleaseYears(bottle) {
+  return uniqueNumbers(extractYearTokens([bottle.name, bottle.batch, bottle.line].join(" ")));
+}
+
+function extractProductMarkers(value = "") {
+  const text = normalizeText(value);
+  const prefixedMarkers = [
+    ...text.matchAll(/\b(?:no|number|batch|chapter|release|series)\s+([0-9]{1,3}[a-z]?)\b/g),
+  ].map((match) => match[1]);
+  const shortNumericMarkers = [...text.matchAll(/\b([0-9]{1,2}[a-z]?)\b/g)].map(
+    (match) => match[1],
+  );
+
+  return [...new Set([...prefixedMarkers, ...shortNumericMarkers])];
+}
+
+function getBottleProductMarkers(bottle) {
+  const ageMarkers = new Set(getBottleAgeNumbers(bottle).map(String));
+  const yearMarkers = new Set(getBottleReleaseYears(bottle).map(String));
+  return extractProductMarkers([bottle.name, bottle.batch, bottle.line].filter(Boolean).join(" "))
+    .filter((marker) => !ageMarkers.has(marker) && !yearMarkers.has(marker));
+}
+
+function hasAnyOverlap(leftValues, rightValues) {
+  if (!leftValues.length || !rightValues.length) return false;
+  const rightSet = new Set(rightValues);
+  return leftValues.some((value) => rightSet.has(value));
+}
+
+function getStrictMatchAssessment(bottle, candidateText, options = {}) {
+  const text = [candidateText, options.url].filter(Boolean).join(" ");
+  const candidateTokens = tokenize(text);
+  const candidateTokenSet = new Set(candidateTokens);
+  const brandTokens = tokenize(bottle.brand);
+  const nameTokens = tokenize(bottle.name).filter((token) => !brandTokens.includes(token));
+  const lineTokens = tokenize(bottle.line);
+  const batchTokens = tokenize(bottle.batch);
+  const ageTokens = tokenize(bottle.age_statement);
+
+  const brandScore = ratioOverlap(brandTokens, candidateTokens);
+  const nameScore = ratioOverlap(nameTokens, candidateTokens);
+  const lineScore = ratioOverlap(lineTokens, candidateTokens);
+  const batchScore = ratioOverlap(batchTokens, candidateTokens);
+  const ageScore = ratioOverlap(ageTokens, candidateTokens);
+  const bottleAges = getBottleAgeNumbers(bottle);
+  const candidateAges = getCandidateAgeNumbers(text);
+  const bottleYears = getBottleReleaseYears(bottle);
+  const candidateYears = extractYearTokens(text);
+  const bottleProductMarkers = getBottleProductMarkers(bottle);
+  const candidateProductMarkers = extractProductMarkers(candidateText);
+  const reasons = [];
+
+  if (brandTokens.length && brandScore < 1) {
+    reasons.push("brand mismatch");
+  }
+
+  if (nameTokens.length >= 3 && nameScore < 0.85) {
+    reasons.push("name token mismatch");
+  } else if (nameTokens.length === 2 && nameScore < 1) {
+    reasons.push("name token mismatch");
+  } else if (nameTokens.length === 1 && !candidateTokenSet.has(nameTokens[0])) {
+    reasons.push("name token mismatch");
+  }
+
+  if (lineTokens.length && lineScore < 0.8) {
+    reasons.push("line mismatch");
+  }
+
+  if (batchTokens.length && batchScore < 0.8) {
+    reasons.push("batch mismatch");
+  }
+
+  if (ageTokens.length && ageScore < 1) {
+    reasons.push("age statement mismatch");
+  }
+
+  if (bottleAges.length && !hasAnyOverlap(bottleAges, candidateAges)) {
+    reasons.push("age number mismatch");
+  }
+
+  if (bottleYears.length && !hasAnyOverlap(bottleYears, candidateYears)) {
+    reasons.push("release year mismatch");
+  }
+
+  if (
+    bottleProductMarkers.length &&
+    !hasAnyOverlap(bottleProductMarkers, candidateProductMarkers)
+  ) {
+    reasons.push("product number mismatch");
+  }
+
+  const normalizedBottleName = normalizeText(bottle.name);
+  const normalizedBrand = normalizeText(bottle.brand);
+  const extraCandidateTokens = candidateTokens.filter(
+    (token) => !brandTokens.includes(token) && !nameTokens.includes(token),
+  );
+  const isBrandOnlyBottle =
+    normalizedBottleName &&
+    normalizedBrand &&
+    normalizedBottleName === normalizedBrand;
+
+  if (isBrandOnlyBottle && extraCandidateTokens.length > 0) {
+    reasons.push("generic bottle matched a specific release");
+  }
+
+  return {
+    accepted: reasons.length === 0,
+    reasons,
+    brandScore,
+    nameScore,
+    lineScore,
+    batchScore,
+    ageScore,
+  };
+}
+
 function ratioOverlap(requiredTokens, candidateTokens) {
   if (!requiredTokens.length) return 1;
   const candidateSet = new Set(candidateTokens);
@@ -257,6 +402,7 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 120000) {
 }
 
 const fxCache = new Map();
+let spiritRadarBottleUrlsPromise = null;
 
 async function convertToUsd(value, currency) {
   if (!Number.isFinite(value)) return null;
@@ -338,10 +484,14 @@ function pickSpiritRadarHistoryPoint(history, targetTimestamp) {
 }
 
 async function getSpiritRadarBottleUrls() {
-  const xml = await fetchText("https://www.spiritradar.com/sitemap-post-type-bottle.xml");
-  return [...xml.matchAll(/<loc>(.*?)<\/loc>/g)]
-    .map((match) => match[1])
-    .filter((url) => typeof url === "string" && url.includes("/bottle/") && !url.endsWith("/bottle/"));
+  spiritRadarBottleUrlsPromise ||= fetchText(
+    "https://www.spiritradar.com/sitemap-post-type-bottle.xml",
+  ).then((xml) =>
+    [...xml.matchAll(/<loc>(.*?)<\/loc>/g)]
+      .map((match) => match[1])
+      .filter((url) => typeof url === "string" && url.includes("/bottle/") && !url.endsWith("/bottle/")),
+  );
+  return spiritRadarBottleUrlsPromise;
 }
 
 function scoreSpiritRadarUrl(url, bottle) {
@@ -389,6 +539,22 @@ async function fetchSpiritRadarReference(bottle) {
       const html = await fetchText(candidate.url);
       const { bottleId, product, webpage } = extractSpiritRadarMetadata(html);
       if (!bottleId || !product?.offers?.lowPrice) {
+        continue;
+      }
+
+      const strictMatch = getStrictMatchAssessment(
+        bottle,
+        [
+          product.name,
+          product.description,
+          webpage?.name,
+          webpage?.headline,
+        ]
+          .filter(Boolean)
+          .join(" "),
+        { url: candidate.url },
+      );
+      if (!strictMatch.accepted) {
         continue;
       }
 
@@ -495,6 +661,22 @@ async function fetchWineSearcherReference(bottle) {
         continue;
       }
 
+      const strictMatch = getStrictMatchAssessment(
+        bottle,
+        [
+          match.wineName,
+          match.wineryName,
+          match.appellation,
+          match.style,
+        ]
+          .filter(Boolean)
+          .join(" "),
+        { url: match.wineSearcherUrl || "" },
+      );
+      if (!strictMatch.accepted) {
+        continue;
+      }
+
       const referencePriceUsd = await convertToUsd(
         Number(match.cheapestPriceAmount),
         String(match.cheapestPriceCurrency ?? "USD").toUpperCase(),
@@ -524,6 +706,11 @@ async function fetchWineSearcherReference(bottle) {
 }
 
 async function fetchWhiskyFindrReference(bottle) {
+  // WhiskyFindr result pages currently expose unrelated dollar amounts that can look
+  // like a match. Keep it out of automatic reference sync until result-level parsing
+  // can validate the matched product name and price together.
+  return null;
+
   const query = encodeURIComponent(buildBottleFields(bottle).join(" "));
   const pages = [
     `https://www.whiskyfindr.com/explore?q=${query}`,
@@ -541,6 +728,11 @@ async function fetchWhiskyFindrReference(bottle) {
         (bottleNameFingerprint.length > 8 && normalizedHtml.includes(bottleNameFingerprint));
 
       if (!hasExactBottleFingerprint) {
+        continue;
+      }
+
+      const strictMatch = getStrictMatchAssessment(bottle, normalizedHtml, { url });
+      if (!strictMatch.accepted) {
         continue;
       }
 
@@ -788,6 +980,13 @@ async function fetchBottleBlueBookReference(bottle) {
           confidence: getBottleBlueBookCandidateConfidence(bottle, candidate),
         }))
         .filter((candidate) => candidate.confidence.confidence >= 0.74)
+        .filter((candidate) =>
+          getStrictMatchAssessment(
+            bottle,
+            [candidate.title, candidate.year].filter(Boolean).join(" "),
+            { url: candidate.url },
+          ).accepted,
+        )
         .sort((left, right) => right.confidence.confidence - left.confidence.confidence)
         .slice(0, 3);
 
@@ -799,8 +998,23 @@ async function fetchBottleBlueBookReference(bottle) {
           title: detail.title || candidate.title,
           text: [candidate.text, detail.type].filter(Boolean).join(" "),
         });
+        const strictDetailMatch = getStrictMatchAssessment(
+          bottle,
+          [
+            detail.title || candidate.title,
+            detail.type,
+            candidate.year,
+          ]
+            .filter(Boolean)
+            .join(" "),
+          { url: candidate.url },
+        );
 
-        if (!detail.referencePriceUsd || detailConfidence.confidence < 0.78) {
+        if (
+          !detail.referencePriceUsd ||
+          detailConfidence.confidence < 0.78 ||
+          !strictDetailMatch.accepted
+        ) {
           continue;
         }
 

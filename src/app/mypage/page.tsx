@@ -624,9 +624,23 @@ export default function MyPage() {
       </div>
 
       {mobileMenuOpen ? (
-        <div className="fixed inset-0 z-40 bg-black/25 lg:hidden" onClick={() => setMobileMenuOpen(false)}>
+        <div
+          className="fixed inset-0 z-40 lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="My page menu"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setMobileMenuOpen(false);
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Close menu"
+            className="absolute inset-0 bg-black/25"
+            onClick={() => setMobileMenuOpen(false)}
+          />
           <div
-            className="ml-auto h-full w-[82vw] max-w-sm bg-white p-6 shadow-2xl"
+            className="relative ml-auto h-full w-[82vw] max-w-sm bg-white p-6 shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
             {sidebar}

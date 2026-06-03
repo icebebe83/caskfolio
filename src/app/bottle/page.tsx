@@ -681,6 +681,9 @@ function BottlePageContent() {
 
           <div className="overflow-x-auto">
             <table className="w-full text-left">
+              <caption className="sr-only">
+                {language === "kr" ? "최근 등록 상태, 컨디션, 날짜, 가격" : "Recent listing status, condition, date, and price"}
+              </caption>
               <thead>
                 <tr className="border-b border-[#111111] text-[10px] font-bold uppercase tracking-[0.24em] text-[#111111]">
                   <th className="pb-4">{language === "kr" ? "상태" : "Status"}</th>

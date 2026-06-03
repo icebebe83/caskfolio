@@ -9,7 +9,6 @@ import { SetupNotice } from "@/components/setup-notice";
 import {
   fetchAdminStatus,
   runNewsImportAction,
-  runReferenceSyncAction,
 } from "@/lib/admin/actions";
 import { useAuth } from "@/components/providers";
 import { BOTTLE_LABEL_VERSION_OPTIONS } from "@/lib/constants";
@@ -173,12 +172,7 @@ export default function AdminPage() {
   const [newsImageFiles, setNewsImageFiles] = useState<Record<string, File | null>>({});
   const [applyingNewsImageId, setApplyingNewsImageId] = useState("");
   const newsImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const [adminServerActionsEnabled, setAdminServerActionsEnabled] = useState(true);
   const newsImportActionsEnabled = true;
-
-  useEffect(() => {
-    setAdminServerActionsEnabled(true);
-  }, []);
 
   const loadAdminData = async () => {
     const [
@@ -260,14 +254,14 @@ export default function AdminPage() {
   useEffect(() => {
     if (!isAdmin) return;
     void loadServerStatus();
-    if (!serverStatus.referenceSync.running && !serverStatus.newsImport.running) return;
+    if (!serverStatus.newsImport.running) return;
 
     const interval = window.setInterval(() => {
       void loadServerStatus();
     }, 2500);
 
     return () => window.clearInterval(interval);
-  }, [isAdmin, serverStatus.referenceSync.running, serverStatus.newsImport.running]);
+  }, [isAdmin, serverStatus.newsImport.running]);
 
   useEffect(() => {
     const selectedBottle = bottles.find((bottle) => bottle.id === selectedBottleId);
@@ -662,28 +656,6 @@ export default function AdminPage() {
     );
   };
 
-  const onRunReferenceSync = async () => {
-    if (!adminServerActionsEnabled) {
-      setError("This action is not available in production yet.");
-      return;
-    }
-    try {
-      setError("");
-      setMessage("");
-      const data = await runReferenceSyncAction();
-      setServerStatus(data);
-      setMessage(
-        data.referenceSync.running
-          ? "Reference sync started."
-          : "Reference sync request accepted.",
-      );
-    } catch (nextError) {
-      setError(
-        nextError instanceof Error ? nextError.message : "Unable to start reference sync.",
-      );
-    }
-  };
-
   const onRunNewsImport = async () => {
     if (!newsImportActionsEnabled) {
       setError("This action is not available in production yet.");
@@ -766,60 +738,6 @@ export default function AdminPage() {
         </div>
 
         <div className="space-y-8">
-          <div className="panel p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-cask">Reference pricing</p>
-            <h2 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-semibold text-ink">
-              Run reference sync
-            </h2>
-            <p className="mt-4 text-sm leading-6 text-ink/65">
-              Trigger the reference pricing workflow directly from the admin dashboard.
-            </p>
-            <button
-              type="button"
-              onClick={onRunReferenceSync}
-              disabled={!adminServerActionsEnabled || serverStatus.referenceSync.running}
-              className="mt-5 rounded-full bg-ink px-4 py-2 text-sm font-medium text-shell transition hover:bg-ink/90 disabled:opacity-60"
-            >
-              {serverStatus.referenceSync.running ? "Reference Sync Running..." : "Run Reference Sync"}
-            </button>
-            {!adminServerActionsEnabled ? (
-              <p className="mt-3 text-sm text-ink/55">
-                This action is not available in production yet.
-              </p>
-            ) : null}
-            <div className="mt-4 space-y-2 text-sm text-ink/70">
-              <p>
-                Status: <span className="font-medium text-ink">{serverStatus.referenceSync.status}</span>
-              </p>
-              {serverStatus.referenceSync.lastSuccessAt ? (
-                <p>
-                  Last successful sync:{" "}
-                  <span className="font-medium text-ink">
-                    {formatDate(serverStatus.referenceSync.lastSuccessAt)}
-                  </span>
-                </p>
-              ) : null}
-              {typeof serverStatus.referenceSync.matchedCount === "number" ? (
-                <p>
-                  Matched:{" "}
-                  <span className="font-medium text-ink">{serverStatus.referenceSync.matchedCount}</span>
-                  {typeof serverStatus.referenceSync.failedCount === "number" ? (
-                    <>
-                      {" · "}Failed:{" "}
-                      <span className="font-medium text-ink">{serverStatus.referenceSync.failedCount}</span>
-                    </>
-                  ) : null}
-                </p>
-              ) : null}
-              {serverStatus.referenceSync.message ? (
-                <p className="text-xs leading-5 text-ink/55">{serverStatus.referenceSync.message}</p>
-              ) : null}
-              {serverStatus.referenceSync.lastError ? (
-                <p className="text-xs leading-5 text-red-600">{serverStatus.referenceSync.lastError}</p>
-              ) : null}
-            </div>
-          </div>
-
           <div className="panel p-6">
             <p className="text-xs uppercase tracking-[0.24em] text-cask">Reports</p>
             <h2 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-semibold text-ink">
@@ -992,27 +910,49 @@ export default function AdminPage() {
           Add manual news
         </h2>
         <div className="mt-5 space-y-4">
-          <input value={manualNews.title} onChange={(event) => setManualNews((current) => ({ ...current, title: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="Title" />
-          <textarea value={manualNews.summary} onChange={(event) => setManualNews((current) => ({ ...current, summary: event.target.value }))} rows={4} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="Summary" />
-          <input value={manualNews.source} onChange={(event) => setManualNews((current) => ({ ...current, source: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="Source" />
-          <input value={manualNews.url} onChange={(event) => setManualNews((current) => ({ ...current, url: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="URL" />
-          <input value={manualNews.imageUrl} onChange={(event) => setManualNews((current) => ({ ...current, imageUrl: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="Image URL (optional)" />
+          <label className="block">
+            <span className="sr-only">Title</span>
+            <input aria-label="Title" value={manualNews.title} onChange={(event) => setManualNews((current) => ({ ...current, title: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="Title" />
+          </label>
+          <label className="block">
+            <span className="sr-only">Summary</span>
+            <textarea aria-label="Summary" value={manualNews.summary} onChange={(event) => setManualNews((current) => ({ ...current, summary: event.target.value }))} rows={4} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="Summary" />
+          </label>
+          <label className="block">
+            <span className="sr-only">Source</span>
+            <input aria-label="Source" value={manualNews.source} onChange={(event) => setManualNews((current) => ({ ...current, source: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="Source" />
+          </label>
+          <label className="block">
+            <span className="sr-only">URL</span>
+            <input aria-label="URL" value={manualNews.url} onChange={(event) => setManualNews((current) => ({ ...current, url: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="URL" />
+          </label>
+          <label className="block">
+            <span className="sr-only">Image URL</span>
+            <input aria-label="Image URL" value={manualNews.imageUrl} onChange={(event) => setManualNews((current) => ({ ...current, imageUrl: event.target.value }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm" placeholder="Image URL (optional)" />
+          </label>
           <div>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(event) => setManualNewsImageFile(event.target.files?.[0] ?? null)}
-              className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm"
-            />
+            <label className="block">
+              <span className="sr-only">Upload news thumbnail</span>
+              <input
+                type="file"
+                accept="image/*"
+                aria-label="Upload news thumbnail"
+                onChange={(event) => setManualNewsImageFile(event.target.files?.[0] ?? null)}
+                className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm"
+              />
+            </label>
             <p className="mt-2 text-xs leading-5 text-ink/45">
               Optional. Use this when Instagram does not expose a thumbnail.
             </p>
           </div>
-          <select value={manualNews.priority} onChange={(event) => setManualNews((current) => ({ ...current, priority: event.target.value as "high" | "medium" | "low" }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm">
-            <option value="high">High priority</option>
-            <option value="medium">Medium priority</option>
-            <option value="low">Low priority</option>
-          </select>
+          <label className="block">
+            <span className="sr-only">Priority</span>
+            <select aria-label="Priority" value={manualNews.priority} onChange={(event) => setManualNews((current) => ({ ...current, priority: event.target.value as "high" | "medium" | "low" }))} className="w-full rounded-2xl border border-ink/10 bg-white px-4 py-3 text-sm">
+              <option value="high">High priority</option>
+              <option value="medium">Medium priority</option>
+              <option value="low">Low priority</option>
+            </select>
+          </label>
           <button type="button" onClick={onCreateManualNews} className="rounded-full bg-ink px-4 py-2 text-sm font-medium text-shell transition hover:bg-ink/90">
             Add manual news
           </button>
@@ -1146,6 +1086,9 @@ export default function AdminPage() {
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
+            <caption className="sr-only">
+              Bottle archive management table with global price and image status.
+            </caption>
             <thead className="border-b border-ink/8 bg-[#faf8f4] text-[11px] uppercase tracking-[0.18em] text-ink/45">
               <tr>
                 <th className="px-6 py-4 font-medium">Name</th>
@@ -1907,16 +1850,6 @@ export default function AdminPage() {
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-ink/45">Google OAuth</p>
             <p className="mt-1 font-medium text-ink">{serverStatus.settings.googleOAuth.label}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-ink/45">Reference sync schedule</p>
-            <p className="mt-1 font-medium text-ink">{serverStatus.settings.referenceSyncSchedule}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-ink/45">Last sync time</p>
-            <p className="mt-1 font-medium text-ink">
-              {serverStatus.settings.lastSyncTime ? formatDate(serverStatus.settings.lastSyncTime) : "No successful sync yet"}
-            </p>
           </div>
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-ink/45">News ingestion status</p>
