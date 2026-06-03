@@ -32,6 +32,18 @@ function NewsCardImage({
   );
 }
 
+function getVisiblePageNumbers(currentPage: number, totalPages: number): number[] {
+  const maxVisiblePages = 9;
+  const visibleCount = Math.min(totalPages, maxVisiblePages);
+  const halfWindow = Math.floor(maxVisiblePages / 2);
+  const startPage = Math.min(
+    Math.max(1, currentPage - halfWindow),
+    Math.max(1, totalPages - visibleCount + 1),
+  );
+
+  return Array.from({ length: visibleCount }, (_, index) => startPage + index);
+}
+
 export default function NewsPage() {
   const { language } = useLanguage();
   const [articles, setArticles] = useState<NewsEntry[]>([]);
@@ -41,6 +53,7 @@ export default function NewsPage() {
   const [page, setPage] = useState(1);
   const [totalArticles, setTotalArticles] = useState(0);
   const totalPages = Math.max(1, Math.ceil(totalArticles / NEWS_PAGE_SIZE));
+  const visiblePages = getVisiblePageNumbers(page, totalPages);
 
   useEffect(() => {
     setHasHydrated(true);
@@ -142,23 +155,35 @@ export default function NewsPage() {
       </section>
 
       {hasHydrated && !loading && totalPages > 1 ? (
-        <nav className="flex items-center justify-center gap-2 text-sm" aria-label="News pages">
+        <nav className="flex flex-wrap items-center justify-center gap-2 text-sm" aria-label="News pages">
           <button
             type="button"
             onClick={() => setPage((current) => Math.max(1, current - 1))}
             disabled={page <= 1}
-            className="rounded-full border border-ink/10 bg-white px-4 py-2 font-medium text-ink transition hover:border-ink/30 disabled:cursor-not-allowed disabled:opacity-40"
+            className="min-w-24 rounded-full border border-ink/10 bg-white px-4 py-2 font-medium text-ink transition hover:border-ink/30 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {language === "kr" ? "이전" : "Previous"}
           </button>
-          <span className="px-3 text-xs font-semibold uppercase tracking-[0.18em] text-ink/50">
-            {page} / {totalPages}
-          </span>
+          {visiblePages.map((pageNumber) => (
+            <button
+              key={pageNumber}
+              type="button"
+              onClick={() => setPage(pageNumber)}
+              aria-current={page === pageNumber ? "page" : undefined}
+              className={`h-10 min-w-10 rounded-full border px-3 text-sm font-semibold transition ${
+                page === pageNumber
+                  ? "border-ink bg-ink text-shell"
+                  : "border-ink/10 bg-white text-ink hover:border-ink/30"
+              }`}
+            >
+              {pageNumber}
+            </button>
+          ))}
           <button
             type="button"
             onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
             disabled={page >= totalPages}
-            className="rounded-full border border-ink/10 bg-white px-4 py-2 font-medium text-ink transition hover:border-ink/30 disabled:cursor-not-allowed disabled:opacity-40"
+            className="min-w-24 rounded-full border border-ink/10 bg-white px-4 py-2 font-medium text-ink transition hover:border-ink/30 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {language === "kr" ? "다음" : "Next"}
           </button>

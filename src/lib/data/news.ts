@@ -62,6 +62,41 @@ function sortCurated(entries: NewsEntry[]): NewsEntry[] {
   });
 }
 
+function fetchJson<T>(url: string): Promise<T> {
+  if (typeof fetch === "function") {
+    return fetch(url, { cache: "no-store" }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error("Unable to load news.");
+      }
+      return (await response.json()) as T;
+    });
+  }
+
+  if (typeof XMLHttpRequest === "undefined") {
+    return Promise.reject(new Error("Unable to load news."));
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("GET", url, true);
+    request.setRequestHeader("Accept", "application/json");
+    request.onload = () => {
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error("Unable to load news."));
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(request.responseText) as T);
+      } catch {
+        reject(new Error("Unable to load news."));
+      }
+    };
+    request.onerror = () => reject(new Error("Unable to load news."));
+    request.send();
+  });
+}
+
 export async function fetchNewsEntries(page = 1, pageSize = NEWS_PAGE_SIZE): Promise<NewsPageResult> {
   const safePage = Math.max(1, page);
   const safePageSize = Math.max(1, pageSize);
@@ -69,17 +104,21 @@ export async function fetchNewsEntries(page = 1, pageSize = NEWS_PAGE_SIZE): Pro
   const to = from + safePageSize - 1;
 
   if (isSupabaseConfigured && supabase) {
-    const { data, error, count } = await supabase
-      .from("news")
-      .select("*", { count: "exact" })
-      .order("published_at", { ascending: false })
-      .range(from, to);
+    try {
+      const { data, error, count } = await supabase
+        .from("news")
+        .select("*", { count: "exact" })
+        .order("published_at", { ascending: false })
+        .range(from, to);
 
-    if (!error && data?.length) {
-      return {
-        entries: sortCurated((data ?? []).map((row) => mapNewsRow(row))),
-        total: count ?? data?.length ?? 0,
-      };
+      if (!error && data?.length) {
+        return {
+          entries: sortCurated((data ?? []).map((row) => mapNewsRow(row))),
+          total: count ?? data?.length ?? 0,
+        };
+      }
+    } catch {
+      // Fall back to the static news archive when the browser cannot run the Supabase client.
     }
   }
 
@@ -88,12 +127,7 @@ export async function fetchNewsEntries(page = 1, pageSize = NEWS_PAGE_SIZE): Pro
       ? "/news.json"
       : "http://127.0.0.1:3008/news.json";
 
-  const response = await fetch(fallbackUrl, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error("Unable to load news.");
-  }
-
-  const data = (await response.json()) as NewsEntry[];
+  const data = await fetchJson<NewsEntry[]>(fallbackUrl);
   const entries = Array.isArray(data) ? sortCurated(data) : [];
   return {
     entries: entries.slice(from, to + 1),
