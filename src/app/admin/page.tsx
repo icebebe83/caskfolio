@@ -96,7 +96,6 @@ import type {
   SpiritCategory,
 } from "@/lib/types";
 
-const DEV_ADMIN_ACTION_HOSTS = new Set(["localhost", "127.0.0.1", "172.20.40.66"]);
 type AdminBottleFilter = "all" | "missing-reference" | "missing-image" | "missing-any";
 
 function inferReferenceSourceFromUrl(sourceUrl: string): string {
@@ -174,14 +173,11 @@ export default function AdminPage() {
   const [newsImageFiles, setNewsImageFiles] = useState<Record<string, File | null>>({});
   const [applyingNewsImageId, setApplyingNewsImageId] = useState("");
   const newsImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const [adminServerActionsEnabled, setAdminServerActionsEnabled] = useState(false);
+  const [adminServerActionsEnabled, setAdminServerActionsEnabled] = useState(true);
   const newsImportActionsEnabled = true;
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const hostname = window.location.hostname;
-    const forceEnabled = process.env.NEXT_PUBLIC_ENABLE_ADMIN_SERVER_ACTIONS === "true";
-    setAdminServerActionsEnabled(forceEnabled || DEV_ADMIN_ACTION_HOSTS.has(hostname));
+    setAdminServerActionsEnabled(true);
   }, []);
 
   const loadAdminData = async () => {

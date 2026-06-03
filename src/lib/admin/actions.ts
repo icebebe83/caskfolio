@@ -1,9 +1,19 @@
 import type { AdminServerStatus } from "@/lib/admin/dto";
 import { appendAuditLog } from "@/lib/data/audit";
+import { supabase } from "@/lib/supabase/client";
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase!.auth.getSession();
+  const accessToken = data.session?.access_token;
+  return accessToken ? { authorization: `Bearer ${accessToken}` } : {};
+}
 
 export async function fetchAdminStatus(): Promise<AdminServerStatus | null> {
   try {
-    const response = await fetch("/__admin/status", { cache: "no-store" });
+    const response = await fetch("/__admin/status", {
+      cache: "no-store",
+      headers: await getAuthHeaders(),
+    });
     if (!response.ok) return null;
     return (await response.json()) as AdminServerStatus;
   } catch {
@@ -14,6 +24,7 @@ export async function fetchAdminStatus(): Promise<AdminServerStatus | null> {
 export async function runReferenceSyncAction(): Promise<AdminServerStatus> {
   const response = await fetch("/__admin/reference-sync", {
     method: "POST",
+    headers: await getAuthHeaders(),
   });
 
   if (!response.ok && response.status !== 202) {
