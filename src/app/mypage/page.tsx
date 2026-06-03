@@ -255,7 +255,7 @@ export default function MyPage() {
         const referenceValueUsd = (reference?.referencePriceUsd ?? 0) * quantity;
 
         sum.referenceValueUsd += referenceValueUsd;
-        sum.gainValueUsd += listedValueUsd - referenceValueUsd;
+        sum.gainValueUsd += referenceValueUsd - listedValueUsd;
         return sum;
       },
       { referenceValueUsd: 0, gainValueUsd: 0 },
