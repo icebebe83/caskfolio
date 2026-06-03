@@ -350,6 +350,32 @@ export async function deleteBottleReferencePrice(bottleId: string): Promise<void
   });
 }
 
+export async function requestBottleReferencePriceSync(bottleId: string): Promise<void> {
+  assertSupabaseConfigured();
+  const { data } = await supabase!.auth.getSession();
+  const accessToken = data.session?.access_token;
+  if (!accessToken) return;
+
+  const response = await fetch("/__reference/sync-bottle", {
+    method: "POST",
+    keepalive: true,
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ bottleId }),
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(
+      typeof payload?.error === "string"
+        ? payload.error
+        : "Unable to sync global reference price.",
+    );
+  }
+}
+
 export async function updateBottleAliases(
   bottleId: string,
   aliases: string[],

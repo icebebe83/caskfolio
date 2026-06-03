@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { loadProjectEnv } from "../shared/load-env.mjs";
 
@@ -9,7 +10,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABAS
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN || "";
 
-const SOURCE_PRIORITY = ["Wine-Searcher", "SpiritRadar", "WhiskyFindr"];
+const SOURCE_PRIORITY = ["Wine-Searcher", "SpiritRadar", "BottleBlueBook", "WhiskyFindr"];
 
 const STOPWORDS = new Set([
   "the",
@@ -66,6 +67,24 @@ function tokenize(value = "") {
     .split(" ")
     .map((token) => token.trim())
     .filter((token) => token.length > 1 && !STOPWORDS.has(token));
+}
+
+function decodeHtml(value = "") {
+  return String(value)
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function stripHtml(value = "") {
+  return decodeHtml(String(value).replace(/<[^>]*>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function buildBottleFields(bottle) {
@@ -201,6 +220,12 @@ async function fetchText(url) {
     throw new Error(`${response.status} ${response.statusText}`);
   }
   return response.text();
+}
+
+function parseDollarAmount(value = "") {
+  const normalized = String(value).replace(/[$,\s]/g, "");
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : null;
 }
 
 async function fetchJson(url) {
@@ -541,7 +566,270 @@ async function fetchWhiskyFindrReference(bottle) {
   return null;
 }
 
-async function resolveExternalReferencePrice(bottle) {
+function buildBottleBlueBookQueries(bottle) {
+  const queries = new Set();
+  const primary = [bottle.brand, bottle.name, bottle.batch, bottle.age_statement]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const secondary = [bottle.brand, bottle.name].filter(Boolean).join(" ").trim();
+  const tertiary = [bottle.name, bottle.batch].filter(Boolean).join(" ").trim();
+
+  for (const query of [primary, secondary, tertiary, bottle.name]) {
+    if (query && normalizeText(query).length >= 3) {
+      queries.add(query);
+    }
+  }
+
+  return [...queries];
+}
+
+function extractBottleBlueBookCandidates(html) {
+  return [...html.matchAll(/<a\s+href="([^"]+)"\s+class="bottle_listings_box">([\s\S]*?)<\/a>/gi)]
+    .map((match) => {
+      const url = decodeHtml(match[1]);
+      const block = match[2] ?? "";
+      const text = stripHtml(block);
+      const title = text.match(/^(.*?)\s+Year:/i)?.[1]?.trim() ?? text.split("Market Estimate:")[0]?.trim() ?? "";
+      const yearValue = text.match(/Year:\s*([^\s]+(?:\s+[^\s]+)?)/i)?.[1]?.trim() ?? "";
+      const proof = Number(text.match(/Proof:\s*([0-9.]+)/i)?.[1] ?? NaN);
+      const volumeMl = Number(text.match(/Size:\s*([0-9,]+)\s*mL/i)?.[1]?.replace(/,/g, "") ?? NaN);
+      const estimateMatch = text.match(/Market Estimate:\s*\$?([0-9,]+)\s*-\s*\$?([0-9,]+)/i);
+      const lastSaleDate = text.match(/Last Collected Sale Date:\s*([0-9]{2}-[0-9]{2}-[0-9]{4}|N\/A)/i)?.[1] ?? "";
+      const changeRaw = text.match(/Market Change:\s*(No Change|[-+]?\d+(?:\.\d+)?%)/i)?.[1] ?? "";
+
+      return {
+        url,
+        title,
+        text,
+        year: yearValue,
+        proof: Number.isFinite(proof) ? proof : null,
+        volumeMl: Number.isFinite(volumeMl) ? volumeMl : null,
+        estimateLow: estimateMatch ? parseDollarAmount(estimateMatch[1]) : null,
+        estimateHigh: estimateMatch ? parseDollarAmount(estimateMatch[2]) : null,
+        lastSaleDate,
+        changePercent:
+          changeRaw && !/no change/i.test(changeRaw)
+            ? Number(changeRaw.replace("%", ""))
+            : 0,
+      };
+    })
+    .filter((candidate) => candidate.url && candidate.title);
+}
+
+function getBottleBlueBookSearchPageUrls(html) {
+  return [
+    ...new Set(
+      [...html.matchAll(/href="(https:\/\/bottlebluebook\.com\/search\/[^"]+\?page=\d+)"/gi)]
+        .map((match) => decodeHtml(match[1]))
+        .slice(0, 2),
+    ),
+  ];
+}
+
+function getBottleBlueBookCandidateConfidence(bottle, candidate) {
+  const bottleBrandTokens = tokenize(bottle.brand);
+  const bottleNameTokens = tokenize(bottle.name);
+  const bottleBatchTokens = tokenize(bottle.batch);
+  const bottleAgeTokens = tokenize(bottle.age_statement);
+  const candidateTokens = tokenize([candidate.title, candidate.text].filter(Boolean).join(" "));
+  const normalizedCandidateText = normalizeText([candidate.title, candidate.text].filter(Boolean).join(" "));
+
+  const brandScore = ratioOverlap(bottleBrandTokens, candidateTokens);
+  const nameScore = ratioOverlap(bottleNameTokens, candidateTokens);
+  const batchScore = ratioOverlap(bottleBatchTokens, candidateTokens);
+  const ageScore = ratioOverlap(bottleAgeTokens, candidateTokens);
+
+  const expectedProof = Number(bottle.abv) > 0 ? Number(bottle.abv) * 2 : null;
+  const proofScore =
+    expectedProof && candidate.proof
+      ? Math.abs(expectedProof - candidate.proof) <= 1
+        ? 1
+        : 0
+      : expectedProof
+        ? 0.5
+        : 1;
+
+  const expectedVolume = Number.isFinite(Number(bottle.volume_ml)) ? Number(bottle.volume_ml) : null;
+  const volumeScore =
+    expectedVolume && candidate.volumeMl
+      ? Math.abs(expectedVolume - candidate.volumeMl) <= 50
+        ? 1
+        : 0
+      : expectedVolume
+        ? 0.5
+        : 1;
+
+  const bottleYears = extractYearTokens([bottle.name, bottle.batch].join(" "));
+  const candidateYears = extractYearTokens([candidate.title, candidate.year].join(" "));
+  const yearScore =
+    bottleYears.length === 0
+      ? 1
+      : bottleYears.some((year) => candidateYears.includes(year))
+        ? 1
+        : 0;
+
+  const categoryNeedle = normalizeText(bottle.category);
+  const categoryScore =
+    !categoryNeedle || categoryNeedle === "etc"
+      ? 1
+      : categoryNeedle === "bourbon"
+        ? normalizedCandidateText.includes("bourbon") || candidate.url.includes("/Bourbon")
+          ? 1
+          : 0.8
+        : categoryNeedle === "whisky"
+          ? 1
+          : 0.5;
+
+  const confidence = Number(
+    (
+      brandScore * 0.28 +
+      nameScore * 0.3 +
+      batchScore * 0.1 +
+      ageScore * 0.08 +
+      proofScore * 0.1 +
+      volumeScore * 0.06 +
+      yearScore * 0.04 +
+      categoryScore * 0.04
+    ).toFixed(3),
+  );
+
+  return {
+    confidence,
+    brandScore,
+    nameScore,
+    proofScore,
+    volumeScore,
+    yearScore,
+  };
+}
+
+function parseBottleBlueBookDate(value = "") {
+  const match = String(value).match(/\b([0-9]{2})[/-]([0-9]{2})[/-]([0-9]{4})\b/);
+  if (!match) return null;
+  const [, month, day, year] = match;
+  const parsed = new Date(`${year}-${month}-${day}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+}
+
+function extractBottleBlueBookDetail(html, candidate) {
+  const text = stripHtml(html);
+  const title = stripHtml(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ?? "") || candidate.title;
+  const type =
+    stripHtml(
+      html.match(/<span[^>]*>\s*Type\s*<\/span>\s*<span[^>]*>([\s\S]*?)<\/span>/i)?.[1] ?? "",
+    ) || "";
+  const estimateMatch = text.match(/Market Data\s+\$?([0-9,]+)\s*-\s*\$?([0-9,]+)/i);
+  const averageMatch = text.match(/\$?([0-9,]+)\s+30 Day Average/i);
+  const latestTransaction = [...text.matchAll(/Sold:\s*\$([0-9,]+)\s+on\s+([0-9]{2}\/[0-9]{2}\/[0-9]{4})/gi)][0];
+  const historicalMatch = html.match(/data:\s*(\[[^\]]+\])\s*,\s*lineColors/i);
+
+  let historical = [];
+  if (historicalMatch?.[1]) {
+    try {
+      historical = JSON.parse(historicalMatch[1]);
+    } catch {
+      historical = [];
+    }
+  }
+
+  const estimateLow = estimateMatch ? parseDollarAmount(estimateMatch[1]) : candidate.estimateLow;
+  const estimateHigh = estimateMatch ? parseDollarAmount(estimateMatch[2]) : candidate.estimateHigh;
+  const average = averageMatch ? parseDollarAmount(averageMatch[1]) : null;
+  const midpoint =
+    estimateLow && estimateHigh
+      ? Number(((estimateLow + estimateHigh) / 2).toFixed(2))
+      : null;
+  const referencePriceUsd = average ?? midpoint;
+  const lastTransactionDate = latestTransaction?.[2] ?? "";
+  const lastSaleDate = lastTransactionDate || candidate.lastSaleDate;
+
+  return {
+    title,
+    type,
+    estimateLow,
+    estimateHigh,
+    average,
+    referencePriceUsd,
+    latestTransactionPrice: latestTransaction ? parseDollarAmount(latestTransaction[1]) : null,
+    lastSaleDate,
+    historical,
+  };
+}
+
+async function fetchBottleBlueBookReference(bottle) {
+  const category = normalizeText(bottle.category);
+  if (["rum", "tequila", "sake", "other spirits"].includes(category)) {
+    return null;
+  }
+
+  const seenUrls = new Set();
+
+  for (const query of buildBottleBlueBookQueries(bottle)) {
+    try {
+      const firstUrl = `https://bottlebluebook.com/search?q=${encodeURIComponent(query)}`;
+      const firstHtml = await fetchText(firstUrl);
+      const pageUrls = [firstUrl, ...getBottleBlueBookSearchPageUrls(firstHtml)];
+      const candidates = [];
+
+      for (const pageUrl of pageUrls) {
+        const html = pageUrl === firstUrl ? firstHtml : await fetchText(pageUrl);
+        candidates.push(...extractBottleBlueBookCandidates(html));
+      }
+
+      const ranked = candidates
+        .filter((candidate) => {
+          if (seenUrls.has(candidate.url)) return false;
+          seenUrls.add(candidate.url);
+          return true;
+        })
+        .map((candidate) => ({
+          ...candidate,
+          confidence: getBottleBlueBookCandidateConfidence(bottle, candidate),
+        }))
+        .filter((candidate) => candidate.confidence.confidence >= 0.74)
+        .sort((left, right) => right.confidence.confidence - left.confidence.confidence)
+        .slice(0, 3);
+
+      for (const candidate of ranked) {
+        const detailHtml = await fetchText(candidate.url);
+        const detail = extractBottleBlueBookDetail(detailHtml, candidate);
+        const detailConfidence = getBottleBlueBookCandidateConfidence(bottle, {
+          ...candidate,
+          title: detail.title || candidate.title,
+          text: [candidate.text, detail.type].filter(Boolean).join(" "),
+        });
+
+        if (!detail.referencePriceUsd || detailConfidence.confidence < 0.78) {
+          continue;
+        }
+
+        const historicalCurrent = Array.isArray(detail.historical) ? detail.historical.at(-1) : null;
+
+        return {
+          bottle_id: bottle.id,
+          source: "BottleBlueBook",
+          reference_price_usd: detail.referencePriceUsd,
+          reference_price_6m_ago: detail.referencePriceUsd,
+          reference_change_percent: candidate.changePercent,
+          source_url: candidate.url,
+          updated_at:
+            parseBottleBlueBookDate(detail.lastSaleDate) ||
+            (historicalCurrent?.y ? new Date(`${historicalCurrent.y}-01-01T00:00:00.000Z`).toISOString() : new Date().toISOString()),
+          confidence_score: detailConfidence.confidence,
+          matched_name: detail.title || candidate.title,
+          matched_volume_ml: candidate.volumeMl,
+        };
+      }
+    } catch {
+      // Continue to the next query variation.
+    }
+  }
+
+  return null;
+}
+
+export async function resolveExternalReferencePrice(bottle) {
   for (const source of SOURCE_PRIORITY) {
     if (source === "Wine-Searcher") {
       const result = await fetchWineSearcherReference(bottle);
@@ -555,6 +843,11 @@ async function resolveExternalReferencePrice(bottle) {
 
     if (source === "SpiritRadar") {
       const result = await fetchSpiritRadarReference(bottle);
+      if (result) return result;
+    }
+
+    if (source === "BottleBlueBook") {
+      const result = await fetchBottleBlueBookReference(bottle);
       if (result) return result;
     }
   }
@@ -581,6 +874,54 @@ async function replaceBottleReferencePrice(supabase, bottleId, referenceRow) {
     }
     throw new Error(`Unable to save reference price for ${bottleId}: ${error.message}`);
   }
+}
+
+export async function syncBottleReferencePrice(supabase, bottleId) {
+  const { data: bottle, error } = await supabase
+    .from("bottles")
+    .select("*")
+    .eq("id", bottleId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Unable to load bottle ${bottleId}: ${error.message}`);
+  }
+
+  if (!bottle) {
+    throw new Error(`Bottle ${bottleId} was not found.`);
+  }
+
+  const reference = await resolveExternalReferencePrice(bottle);
+
+  if (reference) {
+    await replaceBottleReferencePrice(supabase, bottle.id, reference);
+    return {
+      matched: true,
+      detail: {
+        bottleId: bottle.id,
+        bottleName: bottle.name,
+        source: reference.source,
+        referencePriceUsd: reference.reference_price_usd,
+        confidenceScore: reference.confidence_score ?? null,
+        matchedName: reference.matched_name ?? null,
+        matchedVolumeMl: reference.matched_volume_ml ?? null,
+      },
+    };
+  }
+
+  await supabase.from("bottle_reference_prices").delete().eq("bottle_id", bottle.id);
+  return {
+    matched: false,
+    detail: {
+      bottleId: bottle.id,
+      bottleName: bottle.name,
+      source: null,
+      referencePriceUsd: null,
+      confidenceScore: null,
+      matchedName: null,
+      matchedVolumeMl: null,
+    },
+  };
 }
 
 async function mapWithConcurrency(items, limit, mapper) {
@@ -627,37 +968,7 @@ async function main() {
 
   const results = await mapWithConcurrency(targetBottles, 5, async (bottle, index) => {
     console.log(`[reference-sync] ${index + 1}/${targetBottles.length}: ${bottle.name}`);
-    const reference = await resolveExternalReferencePrice(bottle);
-
-    if (reference) {
-      await replaceBottleReferencePrice(supabase, bottle.id, reference);
-      return {
-        matched: true,
-        detail: {
-          bottleId: bottle.id,
-          bottleName: bottle.name,
-          source: reference.source,
-          referencePriceUsd: reference.reference_price_usd,
-          confidenceScore: reference.confidence_score ?? null,
-          matchedName: reference.matched_name ?? null,
-          matchedVolumeMl: reference.matched_volume_ml ?? null,
-        },
-      };
-    }
-
-    await supabase.from("bottle_reference_prices").delete().eq("bottle_id", bottle.id);
-    return {
-      matched: false,
-      detail: {
-        bottleId: bottle.id,
-        bottleName: bottle.name,
-        source: null,
-        referencePriceUsd: null,
-        confidenceScore: null,
-        matchedName: null,
-        matchedVolumeMl: null,
-      },
-    };
+    return syncBottleReferencePrice(supabase, bottle.id);
   });
 
   for (const result of results) {
@@ -676,7 +987,9 @@ async function main() {
   console.log(`[reference-sync] processed ${summary.processed} bottle(s), matched ${summary.matched}, failed ${summary.failed}`);
 }
 
-main().catch((error) => {
-  console.error("[reference-sync] failed:", error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error("[reference-sync] failed:", error);
+    process.exitCode = 1;
+  });
+}

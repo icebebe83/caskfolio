@@ -143,8 +143,9 @@ Allowed source priority:
 
 1. Wine-Searcher
 2. SpiritRadar
-3. WhiskyFindr
-4. No external match: hide global reference price
+3. BottleBlueBook
+4. WhiskyFindr
+5. No external match: hide global reference price
 
 Do not use Caskfolio internal median as a fake global reference fallback.
 

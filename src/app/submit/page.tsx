@@ -16,7 +16,12 @@ import {
 } from "@/lib/constants";
 import { formatKrw, formatUsd, priceToKrw, priceToUsd } from "@/lib/format";
 import { isBackendConfigured } from "@/lib/backend/client";
-import { createBottle, fetchBottlesStrict, submitListing } from "@/lib/data/store";
+import {
+  createBottle,
+  fetchBottlesStrict,
+  requestBottleReferencePriceSync,
+  submitListing,
+} from "@/lib/data/store";
 import { resolveUsdKrwRate } from "@/lib/fx";
 import { tCategory, tCondition, tLabelVersion, tMessenger } from "@/lib/i18n";
 import type { Bottle, MessengerType, SpiritCategory } from "@/lib/types";
@@ -119,6 +124,12 @@ export default function SubmitPage() {
     language === "kr" ? "바틀 목록을 불러오는 중..." : "Loading bottle archive...";
   const getArchiveReadyMessage = () =>
     language === "kr" ? "바틀 목록을 불러왔습니다." : "Bottle archive loaded.";
+
+  const queueReferencePriceSync = (bottleId: string) => {
+    void requestBottleReferencePriceSync(bottleId).catch((syncError) => {
+      console.warn("[reference-sync]", syncError);
+    });
+  };
   const getStageMessage = (stage: SubmitStage) => {
     switch (stage) {
       case "loading-archive":
@@ -574,6 +585,7 @@ export default function SubmitPage() {
               bottle = await createBottle(draftBottle);
               createdBottle = true;
               createdBottleDuringAttempt = true;
+              queueReferencePriceSync(bottle.id);
             }
           } catch (createError) {
             setError(
@@ -633,6 +645,7 @@ export default function SubmitPage() {
             });
             bottle = createdVariant;
             createdBottleDuringAttempt = true;
+            queueReferencePriceSync(createdVariant.id);
             setBottles((current) => [createdVariant, ...current]);
           }
         }
