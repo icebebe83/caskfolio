@@ -127,6 +127,7 @@ export async function submitListing(
     bottle_id: input.bottle.id,
     bottle_name: input.bottle.name,
     category: input.bottle.category,
+    purchase_date: input.purchaseDate || null,
     user_id: user.uid,
     price: input.inputPriceValue,
     currency: input.inputCurrency,
@@ -295,6 +296,7 @@ export async function updateListing(
     inputCurrency: Listing["inputCurrency"];
     fxRate: number;
     quantity: number;
+    purchaseDate?: string;
     condition: string;
     region: string;
     messengerType: NonNullable<Listing["messengerType"]>;
@@ -320,6 +322,7 @@ export async function updateListing(
     normalizedPriceUsd,
     approxPriceKrw,
     quantity: input.quantity,
+    purchaseDate: input.purchaseDate || null,
     condition: input.condition.trim(),
     region: input.region.trim(),
     messengerType: input.messengerType,
@@ -384,6 +387,7 @@ export async function updateListing(
       normalized_price_usd: nextListing.normalizedPriceUsd,
       approx_price_krw: nextListing.approxPriceKrw,
       quantity: nextListing.quantity,
+      purchase_date: input.purchaseDate || null,
       condition: nextListing.condition,
       region: nextListing.region,
       note: nextListing.note,

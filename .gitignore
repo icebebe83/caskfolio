@@ -19,3 +19,6 @@ Whisky-image
 
 # Local Netlify folder
 .netlify
+
+# Local Supabase folder
+supabase/.temp

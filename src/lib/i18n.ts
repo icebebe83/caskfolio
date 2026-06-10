@@ -165,6 +165,8 @@ export function tListingUi(language: Language, value: string): string {
       return "재고 정보";
     case "Quantity":
       return "수량";
+    case "Purchase date":
+      return "구입일";
     case "Region":
       return "지역";
     case "Contact details":

@@ -174,6 +174,7 @@ export function mapListingRow(row: ListingRow): Listing {
     bottleId: String(row.bottle_id ?? ""),
     bottleName: String(row.bottle_name ?? bottle?.name ?? ""),
     category: normalizeCategory(row.category ?? bottle?.category),
+    purchaseDate: (row.purchase_date as AppDateValue) ?? null,
     inputPriceValue,
     inputCurrency,
     fxRateAtEntry,

@@ -28,6 +28,7 @@ import type { Bottle, BottleReferencePrice, CollectorNote, Listing, WishlistBott
 const MY_COLLECTION_PAGE_SIZE = 8;
 type MyPageSection = "overview" | "collection" | "watchlist" | "notes" | "settings";
 type MyPageIcon = MyPageSection | "logout";
+type CollectionSort = "purchase-date" | "listing-date" | "price";
 
 function MyPageNavIcon({ icon }: { icon: MyPageIcon }) {
   const common = "h-5 w-5";
@@ -80,6 +81,7 @@ function MyPageNavIcon({ icon }: { icon: MyPageIcon }) {
 type CollectionEntry = {
   bottle: Bottle;
   latestListing: Listing;
+  purchaseDate: Listing["purchaseDate"];
   totalBottleValueUsd: number;
   cardImageUrl: string;
 };
@@ -97,6 +99,7 @@ export default function MyPage() {
   const [hasHydrated, setHasHydrated] = useState(false);
   const [error, setError] = useState("");
   const [collectionPage, setCollectionPage] = useState(1);
+  const [collectionSort, setCollectionSort] = useState<CollectionSort>("purchase-date");
   const [activeSection, setActiveSection] = useState<MyPageSection>("overview");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [accountFirstNameInput, setAccountFirstNameInput] = useState("");
@@ -182,7 +185,8 @@ export default function MyPage() {
 
         const sortedListings = [...bottleListings].sort(
           (left, right) =>
-            (toDate(right.createdAt)?.getTime() ?? 0) - (toDate(left.createdAt)?.getTime() ?? 0),
+            (toDate(right.purchaseDate)?.getTime() ?? toDate(right.createdAt)?.getTime() ?? 0) -
+            (toDate(left.purchaseDate)?.getTime() ?? toDate(left.createdAt)?.getTime() ?? 0),
         );
         const latestListing = sortedListings[0];
         const totalBottleValueUsd = sortedListings.reduce(
@@ -193,6 +197,7 @@ export default function MyPage() {
         return {
           bottle,
           latestListing,
+          purchaseDate: latestListing.purchaseDate,
           totalBottleValueUsd,
           cardImageUrl: getListingImageForSurface(latestListing, bottle, "mypage-card"),
         } satisfies CollectionEntry;
@@ -200,11 +205,31 @@ export default function MyPage() {
       .filter((entry): entry is CollectionEntry => Boolean(entry));
   }, [bottles, listings]);
 
+  const sortedCollectionEntries = useMemo(() => {
+    return [...collectionEntries].sort((left, right) => {
+      if (collectionSort === "price") {
+        return right.totalBottleValueUsd - left.totalBottleValueUsd;
+      }
+
+      if (collectionSort === "listing-date") {
+        return (
+          (toDate(right.latestListing.createdAt)?.getTime() ?? 0) -
+          (toDate(left.latestListing.createdAt)?.getTime() ?? 0)
+        );
+      }
+
+      return (
+        (toDate(right.purchaseDate)?.getTime() ?? toDate(right.latestListing.createdAt)?.getTime() ?? 0) -
+        (toDate(left.purchaseDate)?.getTime() ?? toDate(left.latestListing.createdAt)?.getTime() ?? 0)
+      );
+    });
+  }, [collectionEntries, collectionSort]);
+
   const collectionPageCount = Math.max(
     1,
-    Math.ceil(collectionEntries.length / MY_COLLECTION_PAGE_SIZE),
+    Math.ceil(sortedCollectionEntries.length / MY_COLLECTION_PAGE_SIZE),
   );
-  const visibleCollectionEntries = collectionEntries.slice(
+  const visibleCollectionEntries = sortedCollectionEntries.slice(
     (collectionPage - 1) * MY_COLLECTION_PAGE_SIZE,
     collectionPage * MY_COLLECTION_PAGE_SIZE,
   );
@@ -241,6 +266,10 @@ export default function MyPage() {
   useEffect(() => {
     setCollectionPage((current) => Math.min(Math.max(1, current), collectionPageCount));
   }, [collectionPageCount]);
+
+  useEffect(() => {
+    setCollectionPage(1);
+  }, [collectionSort]);
 
   const totalPortfolioValueUsd = collectionEntries.reduce(
     (sum, entry) => sum + entry.totalBottleValueUsd,
@@ -577,6 +606,14 @@ export default function MyPage() {
                 </span>
                 <span className="text-sm font-bold text-[#111111]">{formatUsd(entry.totalBottleValueUsd)}</span>
               </div>
+              {entry.purchaseDate ? (
+                <div className="mt-3 flex items-end justify-between border-t border-[#ece8e0] pt-3">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#7a746b]">
+                    {language === "kr" ? "구입일" : "Purchase date"}
+                  </span>
+                  <span className="text-sm font-bold text-[#111111]">{formatDate(entry.purchaseDate)}</span>
+                </div>
+              ) : null}
             </div>
           </Link>
         ))}
@@ -710,6 +747,11 @@ export default function MyPage() {
                               {formatDate(featuredEntry.latestListing.createdAt)}
                             </span>
                           </div>
+                          {featuredEntry.purchaseDate ? (
+                            <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#7a746b]">
+                              {language === "kr" ? "구입일" : "Purchased"} {formatDate(featuredEntry.purchaseDate)}
+                            </p>
+                          ) : null}
                           <h3 className="text-2xl font-bold text-[#111111]">{featuredEntry.bottle.name}</h3>
                           <p className="mt-2 max-w-xs text-sm leading-6 text-[#666159]">
                             {featuredEntry.latestListing.note ||
@@ -746,7 +788,7 @@ export default function MyPage() {
                             <div className="mt-1 flex items-center gap-4">
                               <span className="text-sm font-bold text-[#111111]">{formatUsd(entry.latestListing.normalizedPriceUsd)}</span>
                               <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#7a746b]">
-                                {formatDate(entry.latestListing.createdAt)}
+                                {formatDate(entry.purchaseDate ?? entry.latestListing.createdAt)}
                               </span>
                             </div>
                           </div>
@@ -770,9 +812,23 @@ export default function MyPage() {
                     {language === "kr" ? "업로드한 바틀" : "Uploaded bottles"}
                   </h1>
                 </div>
-                <div className="flex gap-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#7a746b]">
-                  <span>{collectionEntries.length} bottles</span>
-                  <span>{activeListingCount} active</span>
+                <div className="flex flex-col gap-3 sm:items-end">
+                  <div className="flex gap-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#7a746b]">
+                    <span>{collectionEntries.length} bottles</span>
+                    <span>{activeListingCount} active</span>
+                  </div>
+                  <label className="flex items-center gap-3 text-[10px] font-bold uppercase tracking-[0.18em] text-[#7a746b]">
+                    <span>{language === "kr" ? "정렬" : "Sort"}</span>
+                    <select
+                      value={collectionSort}
+                      onChange={(event) => setCollectionSort(event.target.value as CollectionSort)}
+                      className="min-w-40 rounded-full border border-[#e2ddd3] bg-white px-4 py-2 text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#111111] outline-none transition focus:border-[#111111]"
+                    >
+                      <option value="purchase-date">{language === "kr" ? "구입일별" : "Purchase date"}</option>
+                      <option value="listing-date">{language === "kr" ? "등록별" : "Listing date"}</option>
+                      <option value="price">{language === "kr" ? "가격별" : "Price"}</option>
+                    </select>
+                  </label>
                 </div>
               </div>
               {collectionGrid}

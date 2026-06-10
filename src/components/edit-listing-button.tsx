@@ -5,11 +5,21 @@ import { createPortal } from "react-dom";
 
 import { useLanguage } from "@/components/providers";
 import { LISTING_CONDITIONS, MESSENGER_OPTIONS } from "@/lib/constants";
-import { formatKrw, formatUsd, priceToKrw, priceToUsd } from "@/lib/format";
+import { formatKrw, formatUsd, priceToKrw, priceToUsd, toDate } from "@/lib/format";
 import { fetchListingContact, updateListing } from "@/lib/data/store";
 import { resolveUsdKrwRate } from "@/lib/fx";
 import { tCondition, tListingAction, tListingUi, tMessenger, tStatus } from "@/lib/i18n";
 import type { Listing } from "@/lib/types";
+
+function formatDateInputValue(value: Listing["purchaseDate"]): string {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+
+  const date = toDate(value);
+  if (!date || Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
 
 export function EditListingButton({
   listing,
@@ -28,6 +38,7 @@ export function EditListingButton({
   const [inputCurrency, setInputCurrency] = useState<Listing["inputCurrency"]>(listing.inputCurrency);
   const [priceValue, setPriceValue] = useState(String(listing.inputPriceValue));
   const [quantity, setQuantity] = useState(String(listing.quantity || 1));
+  const [purchaseDate, setPurchaseDate] = useState(formatDateInputValue(listing.purchaseDate));
   const [condition, setCondition] = useState(listing.condition || LISTING_CONDITIONS[0]);
   const [region, setRegion] = useState(listing.region);
   const [messengerType, setMessengerType] = useState<NonNullable<Listing["messengerType"]>>(
@@ -44,6 +55,7 @@ export function EditListingButton({
     setInputCurrency(listing.inputCurrency);
     setPriceValue(String(listing.inputPriceValue));
     setQuantity(String(listing.quantity || 1));
+    setPurchaseDate(formatDateInputValue(listing.purchaseDate));
     setCondition(listing.condition || LISTING_CONDITIONS[0]);
     setRegion(listing.region);
     setMessengerType(listing.messengerType ?? "telegram");
@@ -119,6 +131,7 @@ export function EditListingButton({
           inputCurrency,
           fxRate: currentFxRate,
           quantity: numericQuantity,
+          purchaseDate,
           condition,
           region,
           messengerType,
@@ -273,6 +286,17 @@ export function EditListingButton({
                           min="1"
                           value={quantity}
                           onChange={(event) => setQuantity(event.target.value)}
+                          className="field w-full"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                          {tListingUi(language, "Purchase date")}
+                        </label>
+                        <input
+                          type="date"
+                          value={purchaseDate}
+                          onChange={(event) => setPurchaseDate(event.target.value)}
                           className="field w-full"
                         />
                       </div>

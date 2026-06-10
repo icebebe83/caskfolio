@@ -56,6 +56,7 @@ export interface Listing {
   bottleId: string;
   bottleName: string;
   category: SpiritCategory;
+  purchaseDate?: AppDateValue;
   inputPriceValue: number;
   inputCurrency: ListingCurrency;
   fxRateAtEntry: number;
@@ -202,6 +203,7 @@ export interface ListingFilters {
 
 export interface ListingFormInput {
   bottle: Bottle;
+  purchaseDate?: string;
   inputPriceValue: number;
   inputCurrency: ListingCurrency;
   quantity: number;

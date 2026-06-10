@@ -80,6 +80,7 @@ export default function SubmitPage() {
   const [newBottleAbv, setNewBottleAbv] = useState("");
   const [newBottleVolumeMl, setNewBottleVolumeMl] = useState("750");
   const [labelVersion, setLabelVersion] = useState<(typeof BOTTLE_LABEL_VERSION_OPTIONS)[number]>("");
+  const [purchaseDate, setPurchaseDate] = useState("");
   const [fxRate, setFxRate] = useState(0);
   const [priceValue, setPriceValue] = useState("0");
   const [inputCurrency, setInputCurrency] = useState<"USD" | "KRW">("USD");
@@ -109,6 +110,7 @@ export default function SubmitPage() {
     newAbv: "submit-new-abv",
     newVolume: "submit-new-volume",
     labelVersion: "submit-label-version",
+    purchaseDate: "submit-purchase-date",
     inputCurrency: "submit-currency",
     price: "submit-price",
     quantity: "submit-quantity",
@@ -663,6 +665,7 @@ export default function SubmitPage() {
           user,
           {
             bottle,
+            purchaseDate,
             inputPriceValue: numericPrice,
             inputCurrency,
             quantity: Number(quantity || 1),
@@ -1043,6 +1046,24 @@ export default function SubmitPage() {
               {language === "kr"
                 ? "신형/구형 라벨처럼 가격 차이가 있는 경우, 등록 시점을 기준으로 별도 구분할 수 있습니다."
                 : "Use this when the same bottle should be tracked separately by packaging generation, such as New Label or Old Label."}
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor={fieldIds.purchaseDate} className="mb-2 block text-sm font-medium text-ink">
+              {language === "kr" ? "구입일" : "Purchase date"}
+            </label>
+            <input
+              id={fieldIds.purchaseDate}
+              type="date"
+              value={purchaseDate}
+              onChange={(event) => setPurchaseDate(event.target.value)}
+              className="field w-full"
+            />
+            <p className="mt-2 text-xs leading-5 text-ink/60">
+              {language === "kr"
+                ? "마이페이지 컬렉션 정리용으로 사용되며 바틀 상세 페이지에는 표시되지 않습니다."
+                : "Used for organizing your collection in My Page and not shown on the bottle detail page."}
             </p>
           </div>
 
