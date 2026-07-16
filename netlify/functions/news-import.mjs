@@ -1,9 +1,18 @@
+import {
+  createSupabaseAdminClient,
+  requireAdminUser,
+} from "./_shared/admin-reference-sync.mjs";
+
 export default async (request) => {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed." }, { status: 405 });
   }
 
   try {
+    const supabase = createSupabaseAdminClient();
+    const auth = await requireAdminUser(request, supabase);
+    if (auth.error) return auth.error;
+
     const { runNewsImport } = await import("../../scripts/news/import-news.mjs");
     const startedAt = new Date().toISOString();
     const getEnv = (key) => Netlify.env.get(key) ?? process.env[key] ?? "";

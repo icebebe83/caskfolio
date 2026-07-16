@@ -26,6 +26,7 @@ export default async (request) => {
     const supabase = createSupabaseAdminClient();
     const auth = await requireAdminUser(request, supabase);
     if (auth.error) return auth.error;
+    const apifyApiToken = Netlify.env.get("APIFY_API_TOKEN") ?? process.env.APIFY_API_TOKEN ?? "";
 
     const limit = getBatchLimit(request);
     const { missingBottles } = await getReferenceSyncSnapshot(supabase);
@@ -50,7 +51,7 @@ export default async (request) => {
 
     for (const bottle of targets) {
       try {
-        const result = await syncBottleReferencePrice(supabase, bottle.id);
+        const result = await syncBottleReferencePrice(supabase, bottle.id, { apifyApiToken });
         details.push(result);
       } catch (error) {
         details.push({

@@ -46,6 +46,7 @@ export async function runReferenceSyncAction(): Promise<AdminServerStatus> {
 export async function runNewsImportAction(): Promise<AdminServerStatus> {
   const response = await fetch("/__admin/news-import", {
     method: "POST",
+    headers: await getAuthHeaders(),
   });
 
   if (!response.ok && response.status !== 202) {

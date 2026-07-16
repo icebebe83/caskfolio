@@ -8,6 +8,7 @@ export default async (request) => {
   const getEnv = (key) => Netlify.env.get(key) ?? process.env[key] ?? "";
   const supabaseUrl = getEnv("SUPABASE_URL") || getEnv("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+  const apifyApiToken = getEnv("APIFY_API_TOKEN");
 
   if (!supabaseUrl || !serviceRoleKey) {
     return Response.json({ error: "Reference sync is not configured." }, { status: 500 });
@@ -42,7 +43,10 @@ export default async (request) => {
 
   try {
     const { syncBottleReferencePrice } = await import("../../scripts/reference/sync-reference-prices.mjs");
-    const result = await syncBottleReferencePrice(supabase, bottleId);
+    const result = await syncBottleReferencePrice(supabase, bottleId, {
+      apifyApiToken,
+      onlyIfMissing: true,
+    });
     return Response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to sync reference price.";

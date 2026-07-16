@@ -11,6 +11,57 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const APIFY_API_TOKEN = process.env.APIFY_API_TOKEN || "";
 
 const SOURCE_PRIORITY = ["Wine-Searcher", "SpiritRadar", "BottleBlueBook", "WhiskyFindr"];
+const REUSABLE_REFERENCE_SOURCES = new Set(["winesearcher", "spiritradar"]);
+const REUSABLE_REFERENCE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+const PRESENTATION_METADATA_PATTERN =
+  /\b(?:(?:very\s+)?old|new)\s+(?:label|bottle|bottling|packaging)\b|\bempty\s+bottle\b/gi;
+const NON_IDENTITY_VALUES = new Set(["", ".", "-", "n a", "na", "none", "unknown"]);
+const DISTINCTIVE_PRODUCT_QUALIFIERS = new Set([
+  "anniversary",
+  "commemorative",
+  "exclusive",
+  "exclusivite",
+  "master",
+  "private",
+  "reserve",
+  "select",
+  "special",
+  "takara",
+  "travel",
+]);
+const NUMBER_WORDS = new Map([
+  ["three", "3"],
+  ["four", "4"],
+  ["five", "5"],
+  ["six", "6"],
+  ["seven", "7"],
+  ["eight", "8"],
+  ["nine", "9"],
+  ["ten", "10"],
+  ["eleven", "11"],
+  ["twelve", "12"],
+  ["thirteen", "13"],
+  ["fourteen", "14"],
+  ["fifteen", "15"],
+  ["sixteen", "16"],
+  ["seventeen", "17"],
+  ["eighteen", "18"],
+  ["nineteen", "19"],
+  ["twenty", "20"],
+  ["twenty one", "21"],
+  ["twenty five", "25"],
+  ["twenty seven", "27"],
+  ["twenty nine", "29"],
+  ["thirty", "30"],
+]);
+const SEARCH_ABBREVIATIONS = [
+  [/\b(\d{1,3})\s*(?:yo|yr|yrs|y)\b/gi, "$1 year"],
+  [/\bcs\b/gi, "cask strength"],
+  [/\bbp\b/gi, "barrel proof"],
+  [/\bfp\b/gi, "full proof"],
+  [/\bsb\b/gi, "single barrel"],
+  [/\bdr\b/gi, "distillers reserve"],
+];
 
 const STOPWORDS = new Set([
   "the",
@@ -34,6 +85,12 @@ const STOPWORDS = new Set([
   "proof",
   "release",
   "limited",
+  "label",
+  "bottle",
+  "bottling",
+  "packaging",
+  "nas",
+  "ed",
 ]);
 
 const OUTPUT_PATH = path.join(process.cwd(), "public", "reference-price-sync.json");
@@ -53,20 +110,118 @@ function getSupabaseAdmin() {
 }
 
 function normalizeText(value = "") {
-  return value
+  let normalized = String(value)
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
+    .replace(/\bfourroses\b/g, "four roses")
+    .replace(/\bbullet\b/g, "bulleit")
+    .replace(/\bcutty sack\b/g, "cutty sark")
+    .replace(/\bsantory\b/g, "suntory")
+    .replace(/\bhennesy\b/g, "hennessy")
+    .replace(/\bannoversary\b/g, "anniversary")
+    .replace(/\bmasater\b/g, "master")
+    .replace(/\bqubec\b/g, "quebec")
+    .replace(/\b(?:the )?glen allachie\b/g, "glenallachie")
     .trim();
+
+  for (const [word, number] of [...NUMBER_WORDS].sort(
+    (left, right) => right[0].length - left[0].length,
+  )) {
+    normalized = normalized.replace(new RegExp(`\\b${word}\\b`, "g"), number);
+  }
+
+  return normalized;
 }
 
 function tokenize(value = "") {
-  return normalizeText(value)
+  return normalizeText(expandSearchAbbreviations(value))
+    .replace(/([a-z])([0-9])/g, "$1 $2")
+    .replace(/([0-9])([a-z])/g, "$1 $2")
     .split(" ")
     .map((token) => token.trim())
     .filter((token) => token.length > 1 && !STOPWORDS.has(token));
+}
+
+export function sanitizeReferenceText(value = "") {
+  return String(value)
+    .replace(PRESENTATION_METADATA_PATTERN, " ")
+    .replace(/[·|/]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s.,;:_-]+|[\s.,;:_-]+$/g, "")
+    .trim();
+}
+
+function isNonIdentityValue(value = "") {
+  return NON_IDENTITY_VALUES.has(normalizeText(value));
+}
+
+function getMeaningfulAgeStatement(bottle) {
+  const ageStatement = sanitizeReferenceText(bottle.age_statement);
+  if (isNonIdentityValue(ageStatement) || /^nas\b/i.test(ageStatement)) return "";
+  return ageStatement;
+}
+
+function getMeaningfulBatch(bottle) {
+  const batch = sanitizeReferenceText(bottle.batch);
+  if (isNonIdentityValue(batch)) return "";
+
+  const identityParts = [
+    ...batch.matchAll(/\b(?:batch|chapter|release|series)\s*[:#-]?\s*[a-z0-9.-]+/gi),
+  ].map((match) => match[0]);
+  identityParts.push(...[...batch.matchAll(/\b(?:19|20)\d{2}\b/g)].map((match) => match[0]));
+
+  if (/^\s*(?:[a-z]\d{2,3}|\d{2,3}[a-z])\s*$/i.test(batch)) {
+    identityParts.push(batch.trim());
+  }
+
+  return [...new Set(identityParts.map((value) => value.trim()).filter(Boolean))].join(" ");
+}
+
+function getReferenceNames(bottle) {
+  const names = [sanitizeReferenceText(bottle.name)];
+  for (const alias of Array.isArray(bottle.aliases) ? bottle.aliases : []) {
+    if (/^BTL-\d+$/i.test(String(alias).trim())) continue;
+    const nextAlias = sanitizeReferenceText(alias);
+    if (nextAlias) names.push(nextAlias);
+  }
+  return [...new Set(names.filter(Boolean))];
+}
+
+function expandSearchAbbreviations(value = "") {
+  return SEARCH_ABBREVIATIONS.reduce(
+    (current, [pattern, replacement]) => current.replace(pattern, replacement),
+    String(value),
+  ).replace(/\s+/g, " ").trim();
+}
+
+function joinDistinctSearchFields(fields) {
+  const preparedFields = fields
+    .map((field) => String(field ?? "").trim())
+    .filter(Boolean)
+    .map((value) => ({ value, tokens: tokenize(value) }));
+  const values = [];
+  const includedTokens = new Set();
+
+  for (const [index, field] of preparedFields.entries()) {
+    const { value, tokens } = field;
+    const isContainedByLaterField = preparedFields
+      .slice(index + 1)
+      .some((laterField) => tokens.length && tokens.every((token) => laterField.tokens.includes(token)));
+    if (isContainedByLaterField) continue;
+    if (tokens.length && tokens.every((token) => includedTokens.has(token))) continue;
+    values.push(value);
+    for (const token of tokens) includedTokens.add(token);
+  }
+
+  return values.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function addDiagnostic(diagnostics, entry) {
+  if (!Array.isArray(diagnostics) || diagnostics.length >= 40) return;
+  diagnostics.push(entry);
 }
 
 function decodeHtml(value = "") {
@@ -89,20 +244,20 @@ function stripHtml(value = "") {
 
 function buildBottleFields(bottle) {
   return [
-    bottle.name,
-    bottle.brand,
-    bottle.line,
-    bottle.batch,
-    bottle.age_statement,
+    ...getReferenceNames(bottle),
+    sanitizeReferenceText(bottle.brand),
+    sanitizeReferenceText(bottle.line),
+    getMeaningfulBatch(bottle),
+    getMeaningfulAgeStatement(bottle),
   ].filter(Boolean);
 }
 
 function isTooGenericForWineSearcher(bottle) {
-  const normalizedName = normalizeText(bottle.name);
-  const normalizedBrand = normalizeText(bottle.brand);
-  const nameTokens = tokenize(bottle.name);
-  const ageTokens = tokenize(bottle.age_statement);
-  const batchTokens = tokenize(bottle.batch);
+  const normalizedName = normalizeText(sanitizeReferenceText(bottle.name));
+  const normalizedBrand = normalizeText(sanitizeReferenceText(bottle.brand));
+  const nameTokens = tokenize(sanitizeReferenceText(bottle.name));
+  const ageTokens = tokenize(getMeaningfulAgeStatement(bottle));
+  const batchTokens = tokenize(getMeaningfulBatch(bottle));
 
   return (
     normalizedName &&
@@ -130,7 +285,7 @@ function uniqueNumbers(values) {
 function extractAgeNumbers(value = "") {
   const text = String(value);
   const explicitAges = [
-    ...text.matchAll(/\b(\d{1,3})\s*(?:yo|yr|yrs|year|years)\b/gi),
+    ...text.matchAll(/\b(\d{1,3})\s*(?:yo|yr|yrs|year|years|y)\b/gi),
   ].map((match) => Number(match[1]));
   const standaloneAge =
     /^\s*\d{1,3}\s*$/.test(text) ? [Number(text.trim())] : [];
@@ -142,18 +297,26 @@ function getBottleAgeNumbers(bottle) {
     [
       bottle.name,
       bottle.line,
-      bottle.batch,
-      bottle.age_statement,
+      getMeaningfulBatch(bottle),
+      getMeaningfulAgeStatement(bottle),
     ].flatMap((value) => extractAgeNumbers(value)),
   );
 }
 
 function getCandidateAgeNumbers(candidateText) {
-  return extractAgeNumbers(candidateText);
+  const normalizedText = normalizeText(candidateText);
+  const standaloneAgeCandidates = [...normalizedText.matchAll(/\b([3-9]|[1-4][0-9]|50)\b/g)].map(
+    (match) => Number(match[1]),
+  );
+  return uniqueNumbers([...extractAgeNumbers(candidateText), ...standaloneAgeCandidates]);
 }
 
 function getBottleReleaseYears(bottle) {
-  return uniqueNumbers(extractYearTokens([bottle.name, bottle.batch, bottle.line].join(" ")));
+  return uniqueNumbers(
+    extractYearTokens(
+      [sanitizeReferenceText(bottle.name), getMeaningfulBatch(bottle), bottle.line].join(" "),
+    ),
+  );
 }
 
 function extractProductMarkers(value = "") {
@@ -171,7 +334,11 @@ function extractProductMarkers(value = "") {
 function getBottleProductMarkers(bottle) {
   const ageMarkers = new Set(getBottleAgeNumbers(bottle).map(String));
   const yearMarkers = new Set(getBottleReleaseYears(bottle).map(String));
-  return extractProductMarkers([bottle.name, bottle.batch, bottle.line].filter(Boolean).join(" "))
+  return extractProductMarkers(
+    [sanitizeReferenceText(bottle.name), getMeaningfulBatch(bottle), bottle.line]
+      .filter(Boolean)
+      .join(" "),
+  )
     .filter((marker) => !ageMarkers.has(marker) && !yearMarkers.has(marker));
 }
 
@@ -181,18 +348,24 @@ function hasAnyOverlap(leftValues, rightValues) {
   return leftValues.some((value) => rightSet.has(value));
 }
 
-function getStrictMatchAssessment(bottle, candidateText, options = {}) {
+export function getStrictMatchAssessment(bottle, candidateText, options = {}) {
   const text = [candidateText, options.url].filter(Boolean).join(" ");
   const candidateTokens = tokenize(text);
   const candidateTokenSet = new Set(candidateTokens);
-  const brandTokens = tokenize(bottle.brand);
-  const nameTokens = tokenize(bottle.name).filter((token) => !brandTokens.includes(token));
-  const lineTokens = tokenize(bottle.line);
-  const batchTokens = tokenize(bottle.batch);
-  const ageTokens = tokenize(bottle.age_statement);
+  const brandTokens = tokenize(sanitizeReferenceText(bottle.brand));
+  const nameAssessments = getReferenceNames(bottle)
+    .map((name) => {
+      const tokens = tokenize(name);
+      return { tokens, score: ratioOverlap(tokens, candidateTokens) };
+    })
+    .sort((left, right) => right.score - left.score || right.tokens.length - left.tokens.length);
+  const nameTokens = nameAssessments[0]?.tokens ?? [];
+  const lineTokens = tokenize(sanitizeReferenceText(bottle.line));
+  const batchTokens = tokenize(getMeaningfulBatch(bottle));
+  const ageTokens = tokenize(getMeaningfulAgeStatement(bottle));
 
   const brandScore = ratioOverlap(brandTokens, candidateTokens);
-  const nameScore = ratioOverlap(nameTokens, candidateTokens);
+  const nameScore = nameAssessments[0]?.score ?? 1;
   const lineScore = ratioOverlap(lineTokens, candidateTokens);
   const batchScore = ratioOverlap(batchTokens, candidateTokens);
   const ageScore = ratioOverlap(ageTokens, candidateTokens);
@@ -202,9 +375,28 @@ function getStrictMatchAssessment(bottle, candidateText, options = {}) {
   const candidateYears = extractYearTokens(text);
   const bottleProductMarkers = getBottleProductMarkers(bottle);
   const candidateProductMarkers = extractProductMarkers(candidateText);
+  const expectedVolume = Number.isFinite(Number(bottle.volume_ml)) ? Number(bottle.volume_ml) : null;
+  const matchedVolume = Number.isFinite(Number(options.matchedVolumeMl))
+    ? Number(options.matchedVolumeMl)
+    : extractVolumeMl(candidateText);
   const reasons = [];
 
-  if (brandTokens.length && brandScore < 1) {
+  if (options.candidateName) {
+    const bottleIdentityTokens = new Set(buildBottleFields(bottle).flatMap(tokenize));
+    const unexpectedQualifiers = tokenize(options.candidateName).filter(
+      (token) =>
+        DISTINCTIVE_PRODUCT_QUALIFIERS.has(token) && !bottleIdentityTokens.has(token),
+    );
+    if (unexpectedQualifiers.length) {
+      reasons.push(`unexpected product qualifier: ${[...new Set(unexpectedQualifiers)].join(", ")}`);
+    }
+  }
+
+  const strongNameMatch =
+    nameTokens.length === 0 ||
+    (nameTokens.length === 1 ? nameScore === 1 : nameTokens.length === 2 ? nameScore === 1 : nameScore >= 0.85);
+
+  if (brandTokens.length && brandScore < 1 && !strongNameMatch) {
     reasons.push("brand mismatch");
   }
 
@@ -243,8 +435,12 @@ function getStrictMatchAssessment(bottle, candidateText, options = {}) {
     reasons.push("product number mismatch");
   }
 
-  const normalizedBottleName = normalizeText(bottle.name);
-  const normalizedBrand = normalizeText(bottle.brand);
+  if (expectedVolume && matchedVolume && Math.abs(expectedVolume - matchedVolume) > 50) {
+    reasons.push("volume mismatch");
+  }
+
+  const normalizedBottleName = normalizeText(sanitizeReferenceText(bottle.name));
+  const normalizedBrand = normalizeText(sanitizeReferenceText(bottle.brand));
   const extraCandidateTokens = candidateTokens.filter(
     (token) => !brandTokens.includes(token) && !nameTokens.includes(token),
   );
@@ -265,6 +461,7 @@ function getStrictMatchAssessment(bottle, candidateText, options = {}) {
     lineScore,
     batchScore,
     ageScore,
+    matchedVolumeMl: matchedVolume,
   };
 }
 
@@ -275,11 +472,11 @@ function ratioOverlap(requiredTokens, candidateTokens) {
   return matched / requiredTokens.length;
 }
 
-function getWineSearcherConfidence(bottle, match) {
-  const bottleBrandTokens = tokenize(bottle.brand);
-  const bottleNameTokens = tokenize(bottle.name);
-  const bottleBatchTokens = tokenize(bottle.batch);
-  const bottleAgeTokens = tokenize(bottle.age_statement);
+export function getWineSearcherConfidence(bottle, match) {
+  const bottleBrandTokens = tokenize(sanitizeReferenceText(bottle.brand));
+  const bottleNameTokenVariants = getReferenceNames(bottle).map(tokenize);
+  const bottleBatchTokens = tokenize(getMeaningfulBatch(bottle));
+  const bottleAgeTokens = tokenize(getMeaningfulAgeStatement(bottle));
   const resultText = [
     match.wineName,
     match.wineryName,
@@ -292,7 +489,10 @@ function getWineSearcherConfidence(bottle, match) {
   const normalizedResultText = normalizeText(resultText);
 
   const brandScore = ratioOverlap(bottleBrandTokens, resultTokens);
-  const nameScore = ratioOverlap(bottleNameTokens, resultTokens);
+  const nameScore = Math.max(
+    0,
+    ...bottleNameTokenVariants.map((tokens) => ratioOverlap(tokens, resultTokens)),
+  );
   const batchScore = ratioOverlap(bottleBatchTokens, resultTokens);
   const ageScore = ratioOverlap(bottleAgeTokens, resultTokens);
 
@@ -304,10 +504,10 @@ function getWineSearcherConfidence(bottle, match) {
         ? 1
         : 0
       : expectedVolume
-        ? 0
+        ? 0.5
         : 1;
 
-  const bottleYears = extractYearTokens([bottle.name, bottle.batch].join(" "));
+  const bottleYears = getBottleReleaseYears(bottle);
   const resultYears = extractYearTokens(match.wineName);
   const yearScore =
     bottleYears.length === 0
@@ -315,7 +515,7 @@ function getWineSearcherConfidence(bottle, match) {
       : bottleYears.some((year) => resultYears.includes(year))
         ? 1
         : 0;
-  const categoryNeedle = normalizeText(bottle.category);
+  const categoryNeedle = normalizeText(bottle.category).replace(/^위스키$/, "whisky");
   const categoryScore =
     !categoryNeedle || categoryNeedle === "etc"
       ? 1
@@ -333,12 +533,12 @@ function getWineSearcherConfidence(bottle, match) {
 
   const confidence = Number(
     (
-      brandScore * 0.35 +
-      nameScore * 0.3 +
+      brandScore * 0.2 +
+      nameScore * 0.45 +
       batchScore * 0.1 +
-      ageScore * 0.1 +
+      ageScore * 0.08 +
       volumeScore * 0.05 +
-      yearScore * 0.05 +
+      yearScore * 0.07 +
       categoryScore * 0.05
     ).toFixed(3),
   );
@@ -499,11 +699,11 @@ function scoreSpiritRadarUrl(url, bottle) {
   const slugTokens = new Set(tokenize(slug));
   const fields = buildBottleFields(bottle);
   const weightedGroups = [
-    { tokens: tokenize(bottle.brand), weight: 3 },
-    { tokens: tokenize(bottle.name), weight: 2.5 },
-    { tokens: tokenize(bottle.line), weight: 1.5 },
-    { tokens: tokenize(bottle.batch), weight: 1.5 },
-    { tokens: tokenize(bottle.age_statement), weight: 1.2 },
+    { tokens: tokenize(sanitizeReferenceText(bottle.brand)), weight: 3 },
+    { tokens: tokenize(sanitizeReferenceText(bottle.name)), weight: 2.5 },
+    { tokens: tokenize(sanitizeReferenceText(bottle.line)), weight: 1.5 },
+    { tokens: tokenize(getMeaningfulBatch(bottle)), weight: 1.5 },
+    { tokens: tokenize(getMeaningfulAgeStatement(bottle)), weight: 1.2 },
   ];
 
   let score = 0;
@@ -526,7 +726,7 @@ function scoreSpiritRadarUrl(url, bottle) {
   return { score, matchedCount };
 }
 
-async function fetchSpiritRadarReference(bottle) {
+async function fetchSpiritRadarReference(bottle, diagnostics) {
   const urls = await getSpiritRadarBottleUrls();
   const ranked = urls
     .map((url) => ({ url, ...scoreSpiritRadarUrl(url, bottle) }))
@@ -534,11 +734,20 @@ async function fetchSpiritRadarReference(bottle) {
     .sort((left, right) => right.score - left.score)
     .slice(0, 3);
 
+  if (!ranked.length) {
+    addDiagnostic(diagnostics, { source: "SpiritRadar", status: "no_candidates" });
+  }
+
   for (const candidate of ranked) {
     try {
       const html = await fetchText(candidate.url);
       const { bottleId, product, webpage } = extractSpiritRadarMetadata(html);
       if (!bottleId || !product?.offers?.lowPrice) {
+        addDiagnostic(diagnostics, {
+          source: "SpiritRadar",
+          status: "invalid_result",
+          url: candidate.url,
+        });
         continue;
       }
 
@@ -552,9 +761,15 @@ async function fetchSpiritRadarReference(bottle) {
         ]
           .filter(Boolean)
           .join(" "),
-        { url: candidate.url },
+        { url: candidate.url, candidateName: product.name || webpage?.name || "" },
       );
       if (!strictMatch.accepted) {
+        addDiagnostic(diagnostics, {
+          source: "SpiritRadar",
+          status: "strict_mismatch",
+          reasons: strictMatch.reasons,
+          url: candidate.url,
+        });
         continue;
       }
 
@@ -571,6 +786,11 @@ async function fetchSpiritRadarReference(bottle) {
 
       const referencePriceUsd = await convertToUsd(currentValue, sourceCurrency);
       if (!referencePriceUsd) {
+        addDiagnostic(diagnostics, {
+          source: "SpiritRadar",
+          status: "invalid_price",
+          url: candidate.url,
+        });
         continue;
       }
 
@@ -593,34 +813,50 @@ async function fetchSpiritRadarReference(bottle) {
           webpage?.dateModified ||
           (Number.isFinite(latestTimestamp) ? new Date(latestTimestamp).toISOString() : new Date().toISOString()),
       };
-    } catch {
-      // Try the next candidate.
+    } catch (error) {
+      addDiagnostic(diagnostics, {
+        source: "SpiritRadar",
+        status: "source_error",
+        message: error instanceof Error ? error.message : "Unknown source error",
+        url: candidate.url,
+      });
     }
   }
 
   return null;
 }
 
-function buildWineSearcherQueries(bottle) {
-  const uniqueQueries = new Set();
-  const primary = [bottle.brand, bottle.name, bottle.batch, bottle.age_statement]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-  const secondary = [bottle.brand, bottle.name].filter(Boolean).join(" ").trim();
+export function buildWineSearcherQueries(bottle) {
+  const uniqueQueries = new Map();
+  const brand = sanitizeReferenceText(bottle.brand);
+  const batch = getMeaningfulBatch(bottle);
+  const ageStatement = getMeaningfulAgeStatement(bottle);
 
-  for (const query of [primary, secondary]) {
-    if (query) uniqueQueries.add(query);
+  for (const rawName of getReferenceNames(bottle)) {
+    const name = expandSearchAbbreviations(rawName);
+    const queries = [
+      [name, batch, ageStatement],
+      [brand, name],
+      [name],
+    ];
+    for (const fields of queries) {
+      const query = joinDistinctSearchFields(fields);
+      const key = normalizeText(query);
+      if (key && !uniqueQueries.has(key)) uniqueQueries.set(key, query);
+    }
   }
 
-  return [...uniqueQueries];
+  return [...uniqueQueries.values()];
 }
 
-async function fetchWineSearcherReference(bottle) {
-  if (!APIFY_API_TOKEN) {
+async function fetchWineSearcherReference(bottle, diagnostics, options = {}) {
+  const apifyApiToken = options.apifyApiToken || APIFY_API_TOKEN;
+  if (!apifyApiToken) {
+    addDiagnostic(diagnostics, { source: "Wine-Searcher", status: "not_configured" });
     return null;
   }
   if (isTooGenericForWineSearcher(bottle)) {
+    addDiagnostic(diagnostics, { source: "Wine-Searcher", status: "too_generic" });
     return null;
   }
 
@@ -628,7 +864,7 @@ async function fetchWineSearcherReference(bottle) {
   for (const query of queries) {
     try {
       const payload = await fetchJsonWithTimeout(
-        `https://api.apify.com/v2/acts/mrbridge~wine-searcher-scraper-from-list/run-sync-get-dataset-items?token=${encodeURIComponent(APIFY_API_TOKEN)}&timeout=15`,
+        `https://api.apify.com/v2/acts/mrbridge~wine-searcher-scraper-from-list/run-sync-get-dataset-items?token=${encodeURIComponent(apifyApiToken)}&timeout=15`,
         {
           method: "POST",
           headers: {
@@ -648,16 +884,27 @@ async function fetchWineSearcherReference(bottle) {
 
       const match = Array.isArray(payload) ? payload[0] : null;
       if (!match?.cheapestPriceAmount) {
+        addDiagnostic(diagnostics, {
+          source: "Wine-Searcher",
+          status: "no_price",
+          query,
+        });
         continue;
       }
 
       const confidence = getWineSearcherConfidence(bottle, match);
       if (
-        confidence.brandScore <= 0 ||
-        confidence.nameScore < 0.5 ||
-        confidence.categoryScore <= 0 ||
+        confidence.nameScore < 0.65 ||
+        (confidence.brandScore <= 0 && confidence.nameScore < 0.9) ||
         confidence.confidence < WINE_SEARCHER_MIN_CONFIDENCE
       ) {
+        addDiagnostic(diagnostics, {
+          source: "Wine-Searcher",
+          status: "low_confidence",
+          query,
+          confidence: confidence.confidence,
+          matchedName: match.wineName || "",
+        });
         continue;
       }
 
@@ -671,9 +918,20 @@ async function fetchWineSearcherReference(bottle) {
         ]
           .filter(Boolean)
           .join(" "),
-        { url: match.wineSearcherUrl || "" },
+        {
+          url: match.wineSearcherUrl || "",
+          matchedVolumeMl: confidence.matchedVolumeMl,
+          candidateName: match.wineName || "",
+        },
       );
       if (!strictMatch.accepted) {
+        addDiagnostic(diagnostics, {
+          source: "Wine-Searcher",
+          status: "strict_mismatch",
+          query,
+          reasons: strictMatch.reasons,
+          matchedName: match.wineName || "",
+        });
         continue;
       }
 
@@ -682,6 +940,11 @@ async function fetchWineSearcherReference(bottle) {
         String(match.cheapestPriceCurrency ?? "USD").toUpperCase(),
       );
       if (!referencePriceUsd) {
+        addDiagnostic(diagnostics, {
+          source: "Wine-Searcher",
+          status: "invalid_price",
+          query,
+        });
         continue;
       }
 
@@ -697,18 +960,24 @@ async function fetchWineSearcherReference(bottle) {
         matched_name: match.wineName || "",
         matched_volume_ml: confidence.matchedVolumeMl,
       };
-    } catch {
-      // Continue to the next query variation.
+    } catch (error) {
+      addDiagnostic(diagnostics, {
+        source: "Wine-Searcher",
+        status: "source_error",
+        query,
+        message: error instanceof Error ? error.message : "Unknown source error",
+      });
     }
   }
 
   return null;
 }
 
-async function fetchWhiskyFindrReference(bottle) {
+async function fetchWhiskyFindrReference(bottle, diagnostics) {
   // WhiskyFindr result pages currently expose unrelated dollar amounts that can look
   // like a match. Keep it out of automatic reference sync until result-level parsing
   // can validate the matched product name and price together.
+  addDiagnostic(diagnostics, { source: "WhiskyFindr", status: "disabled_unreliable_price" });
   return null;
 
   const query = encodeURIComponent(buildBottleFields(bottle).join(" "));
@@ -758,22 +1027,28 @@ async function fetchWhiskyFindrReference(bottle) {
   return null;
 }
 
-function buildBottleBlueBookQueries(bottle) {
-  const queries = new Set();
-  const primary = [bottle.brand, bottle.name, bottle.batch, bottle.age_statement]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-  const secondary = [bottle.brand, bottle.name].filter(Boolean).join(" ").trim();
-  const tertiary = [bottle.name, bottle.batch].filter(Boolean).join(" ").trim();
+export function buildBottleBlueBookQueries(bottle) {
+  const queries = new Map();
+  const brand = sanitizeReferenceText(bottle.brand);
+  const batch = getMeaningfulBatch(bottle);
+  const ageStatement = getMeaningfulAgeStatement(bottle);
 
-  for (const query of [primary, secondary, tertiary, bottle.name]) {
-    if (query && normalizeText(query).length >= 3) {
-      queries.add(query);
+  for (const rawName of getReferenceNames(bottle)) {
+    const name = expandSearchAbbreviations(rawName);
+    for (const fields of [
+      [name, batch, ageStatement],
+      [brand, name],
+      [name],
+    ]) {
+      const query = joinDistinctSearchFields(fields);
+      const key = normalizeText(query);
+      if (key.length >= 3 && !queries.has(key)) {
+        queries.set(key, query);
+      }
     }
   }
 
-  return [...queries];
+  return [...queries.values()];
 }
 
 function extractBottleBlueBookCandidates(html) {
@@ -819,16 +1094,19 @@ function getBottleBlueBookSearchPageUrls(html) {
   ];
 }
 
-function getBottleBlueBookCandidateConfidence(bottle, candidate) {
-  const bottleBrandTokens = tokenize(bottle.brand);
-  const bottleNameTokens = tokenize(bottle.name);
-  const bottleBatchTokens = tokenize(bottle.batch);
-  const bottleAgeTokens = tokenize(bottle.age_statement);
+export function getBottleBlueBookCandidateConfidence(bottle, candidate) {
+  const bottleBrandTokens = tokenize(sanitizeReferenceText(bottle.brand));
+  const bottleNameTokenVariants = getReferenceNames(bottle).map(tokenize);
+  const bottleBatchTokens = tokenize(getMeaningfulBatch(bottle));
+  const bottleAgeTokens = tokenize(getMeaningfulAgeStatement(bottle));
   const candidateTokens = tokenize([candidate.title, candidate.text].filter(Boolean).join(" "));
   const normalizedCandidateText = normalizeText([candidate.title, candidate.text].filter(Boolean).join(" "));
 
   const brandScore = ratioOverlap(bottleBrandTokens, candidateTokens);
-  const nameScore = ratioOverlap(bottleNameTokens, candidateTokens);
+  const nameScore = Math.max(
+    0,
+    ...bottleNameTokenVariants.map((tokens) => ratioOverlap(tokens, candidateTokens)),
+  );
   const batchScore = ratioOverlap(bottleBatchTokens, candidateTokens);
   const ageScore = ratioOverlap(bottleAgeTokens, candidateTokens);
 
@@ -852,7 +1130,7 @@ function getBottleBlueBookCandidateConfidence(bottle, candidate) {
         ? 0.5
         : 1;
 
-  const bottleYears = extractYearTokens([bottle.name, bottle.batch].join(" "));
+  const bottleYears = getBottleReleaseYears(bottle);
   const candidateYears = extractYearTokens([candidate.title, candidate.year].join(" "));
   const yearScore =
     bottleYears.length === 0
@@ -861,7 +1139,7 @@ function getBottleBlueBookCandidateConfidence(bottle, candidate) {
         ? 1
         : 0;
 
-  const categoryNeedle = normalizeText(bottle.category);
+  const categoryNeedle = normalizeText(bottle.category).replace(/^위스키$/, "whisky");
   const categoryScore =
     !categoryNeedle || categoryNeedle === "etc"
       ? 1
@@ -875,13 +1153,13 @@ function getBottleBlueBookCandidateConfidence(bottle, candidate) {
 
   const confidence = Number(
     (
-      brandScore * 0.28 +
-      nameScore * 0.3 +
-      batchScore * 0.1 +
-      ageScore * 0.08 +
-      proofScore * 0.1 +
-      volumeScore * 0.06 +
-      yearScore * 0.04 +
+      brandScore * 0.18 +
+      nameScore * 0.45 +
+      batchScore * 0.08 +
+      ageScore * 0.07 +
+      proofScore * 0.08 +
+      volumeScore * 0.05 +
+      yearScore * 0.05 +
       categoryScore * 0.04
     ).toFixed(3),
   );
@@ -949,9 +1227,10 @@ function extractBottleBlueBookDetail(html, candidate) {
   };
 }
 
-async function fetchBottleBlueBookReference(bottle) {
+async function fetchBottleBlueBookReference(bottle, diagnostics) {
   const category = normalizeText(bottle.category);
   if (["rum", "tequila", "sake", "other spirits"].includes(category)) {
+    addDiagnostic(diagnostics, { source: "BottleBlueBook", status: "unsupported_category" });
     return null;
   }
 
@@ -969,6 +1248,10 @@ async function fetchBottleBlueBookReference(bottle) {
         candidates.push(...extractBottleBlueBookCandidates(html));
       }
 
+      if (!candidates.length) {
+        addDiagnostic(diagnostics, { source: "BottleBlueBook", status: "no_candidates", query });
+      }
+
       const ranked = candidates
         .filter((candidate) => {
           if (seenUrls.has(candidate.url)) return false;
@@ -984,11 +1267,19 @@ async function fetchBottleBlueBookReference(bottle) {
           getStrictMatchAssessment(
             bottle,
             [candidate.title, candidate.year].filter(Boolean).join(" "),
-            { url: candidate.url },
+            { url: candidate.url, candidateName: candidate.title },
           ).accepted,
         )
         .sort((left, right) => right.confidence.confidence - left.confidence.confidence)
         .slice(0, 3);
+
+      if (candidates.length && !ranked.length) {
+        addDiagnostic(diagnostics, {
+          source: "BottleBlueBook",
+          status: "no_qualified_candidates",
+          query,
+        });
+      }
 
       for (const candidate of ranked) {
         const detailHtml = await fetchText(candidate.url);
@@ -1007,7 +1298,7 @@ async function fetchBottleBlueBookReference(bottle) {
           ]
             .filter(Boolean)
             .join(" "),
-          { url: candidate.url },
+          { url: candidate.url, candidateName: detail.title || candidate.title },
         );
 
         if (
@@ -1015,6 +1306,14 @@ async function fetchBottleBlueBookReference(bottle) {
           detailConfidence.confidence < 0.78 ||
           !strictDetailMatch.accepted
         ) {
+          addDiagnostic(diagnostics, {
+            source: "BottleBlueBook",
+            status: !detail.referencePriceUsd ? "invalid_price" : "strict_mismatch",
+            query,
+            confidence: detailConfidence.confidence,
+            reasons: strictDetailMatch.reasons,
+            matchedName: detail.title || candidate.title,
+          });
           continue;
         }
 
@@ -1035,33 +1334,39 @@ async function fetchBottleBlueBookReference(bottle) {
           matched_volume_ml: candidate.volumeMl,
         };
       }
-    } catch {
-      // Continue to the next query variation.
+    } catch (error) {
+      addDiagnostic(diagnostics, {
+        source: "BottleBlueBook",
+        status: "source_error",
+        query,
+        message: error instanceof Error ? error.message : "Unknown source error",
+      });
     }
   }
 
   return null;
 }
 
-export async function resolveExternalReferencePrice(bottle) {
+export async function resolveExternalReferencePrice(bottle, options = {}) {
+  const diagnostics = options.diagnostics;
   for (const source of SOURCE_PRIORITY) {
     if (source === "Wine-Searcher") {
-      const result = await fetchWineSearcherReference(bottle);
+      const result = await fetchWineSearcherReference(bottle, diagnostics, options);
       if (result) return result;
     }
 
     if (source === "WhiskyFindr") {
-      const result = await fetchWhiskyFindrReference(bottle);
+      const result = await fetchWhiskyFindrReference(bottle, diagnostics);
       if (result) return result;
     }
 
     if (source === "SpiritRadar") {
-      const result = await fetchSpiritRadarReference(bottle);
+      const result = await fetchSpiritRadarReference(bottle, diagnostics);
       if (result) return result;
     }
 
     if (source === "BottleBlueBook") {
-      const result = await fetchBottleBlueBookReference(bottle);
+      const result = await fetchBottleBlueBookReference(bottle, diagnostics);
       if (result) return result;
     }
   }
@@ -1069,9 +1374,169 @@ export async function resolveExternalReferencePrice(bottle) {
   return null;
 }
 
-async function replaceBottleReferencePrice(supabase, bottleId, referenceRow) {
-  await supabase.from("bottle_reference_prices").delete().eq("bottle_id", bottleId);
+function getDistinctiveBatchTokens(bottle) {
+  const nameTokens = new Set(getReferenceNames(bottle).flatMap(tokenize));
+  const ageTokens = new Set(tokenize(getMeaningfulAgeStatement(bottle)));
+  return tokenize(getMeaningfulBatch(bottle)).filter(
+    (token) => !nameTokens.has(token) && !ageTokens.has(token),
+  );
+}
 
+export function isReusableBottleMatch(targetBottle, candidateBottle) {
+  const targetNames = new Set(getReferenceNames(targetBottle).map(normalizeText));
+  const candidateNames = new Set(getReferenceNames(candidateBottle).map(normalizeText));
+  if (![...targetNames].some((name) => candidateNames.has(name))) return false;
+
+  const targetVolume = Number(targetBottle.volume_ml);
+  const candidateVolume = Number(candidateBottle.volume_ml);
+  if (
+    Number.isFinite(targetVolume) &&
+    Number.isFinite(candidateVolume) &&
+    Math.abs(targetVolume - candidateVolume) > 50
+  ) {
+    return false;
+  }
+
+  const targetAges = getBottleAgeNumbers(targetBottle);
+  const candidateAges = getBottleAgeNumbers(candidateBottle);
+  if (targetAges.length || candidateAges.length) {
+    if (!hasAnyOverlap(targetAges, candidateAges)) return false;
+  }
+
+  const targetYears = getBottleReleaseYears(targetBottle);
+  const candidateYears = getBottleReleaseYears(candidateBottle);
+  if (targetYears.length || candidateYears.length) {
+    if (!hasAnyOverlap(targetYears, candidateYears)) return false;
+  }
+
+  const targetMarkers = getBottleProductMarkers(targetBottle);
+  const candidateMarkers = getBottleProductMarkers(candidateBottle);
+  if (targetMarkers.length || candidateMarkers.length) {
+    if (!hasAnyOverlap(targetMarkers, candidateMarkers)) return false;
+  }
+
+  const targetBatchTokens = getDistinctiveBatchTokens(targetBottle);
+  const candidateBatchTokens = getDistinctiveBatchTokens(candidateBottle);
+  if (targetBatchTokens.length || candidateBatchTokens.length) {
+    if (!hasAnyOverlap(targetBatchTokens, candidateBatchTokens)) return false;
+  }
+
+  return true;
+}
+
+function normalizeReferenceSource(source = "") {
+  return normalizeText(source).replace(/\s+/g, "");
+}
+
+function getSourceIdentityText(sourceUrl = "") {
+  try {
+    const url = new URL(sourceUrl);
+    return decodeURIComponent(url.pathname).replace(/[+/_-]+/g, " ");
+  } catch {
+    return "";
+  }
+}
+
+function isReusableReferenceRow(reference, bottle) {
+  const source = normalizeReferenceSource(reference.source);
+  const updatedAt = Date.parse(reference.updated_at);
+  const ageMs = Date.now() - updatedAt;
+  const sourceIdentityText = getSourceIdentityText(reference.source_url);
+  const sourceMatch = sourceIdentityText
+    ? getStrictMatchAssessment(bottle, sourceIdentityText, { candidateName: sourceIdentityText })
+    : { accepted: false };
+  return (
+    REUSABLE_REFERENCE_SOURCES.has(source) &&
+    Number(reference.reference_price_usd) > 0 &&
+    /^https?:\/\//i.test(String(reference.source_url ?? "")) &&
+    Number.isFinite(updatedAt) &&
+    ageMs <= REUSABLE_REFERENCE_MAX_AGE_MS &&
+    sourceMatch.accepted
+  );
+}
+
+async function findReusableExternalReference(supabase, bottle, diagnostics) {
+  const [{ data: bottles, error: bottlesError }, { data: references, error: referencesError }] =
+    await Promise.all([
+      supabase
+        .from("bottles")
+        .select("id,name,brand,category,line,batch,age_statement,volume_ml,aliases")
+        .neq("id", bottle.id)
+        .limit(2000),
+      supabase
+        .from("bottle_reference_prices")
+        .select(
+          "bottle_id,source,reference_price_usd,reference_price_6m_ago,reference_change_percent,source_url,updated_at",
+        )
+        .order("updated_at", { ascending: false })
+        .limit(5000),
+    ]);
+
+  if (bottlesError || referencesError) {
+    addDiagnostic(diagnostics, {
+      source: "existing_reference",
+      status: "lookup_error",
+      message: bottlesError?.message || referencesError?.message || "Unable to load reusable references",
+    });
+    return null;
+  }
+
+  if ((references ?? []).some((row) => String(row.bottle_id) === String(bottle.id))) {
+    return null;
+  }
+
+  const reusableBottleIds = new Set(
+    (bottles ?? [])
+      .filter((candidate) => isReusableBottleMatch(bottle, candidate))
+      .map((candidate) => String(candidate.id)),
+  );
+
+  const sourceRank = new Map(
+    SOURCE_PRIORITY.map((source, index) => [normalizeReferenceSource(source), index]),
+  );
+  const reference = (references ?? [])
+    .filter(
+      (row) => {
+        const sourceBottle = (bottles ?? []).find(
+          (candidate) => String(candidate.id) === String(row.bottle_id),
+        );
+        return (
+          reusableBottleIds.has(String(row.bottle_id)) &&
+          sourceBottle &&
+          isReusableReferenceRow(row, sourceBottle)
+        );
+      },
+    )
+    .sort((left, right) => {
+      const sourceDifference =
+        (sourceRank.get(normalizeReferenceSource(left.source)) ?? 99) -
+        (sourceRank.get(normalizeReferenceSource(right.source)) ?? 99);
+      if (sourceDifference) return sourceDifference;
+      return Date.parse(right.updated_at) - Date.parse(left.updated_at);
+    })[0];
+
+  if (!reference) {
+    addDiagnostic(diagnostics, { source: "existing_reference", status: "no_exact_match" });
+    return null;
+  }
+
+  return {
+    reusedFromBottleId: reference.bottle_id,
+    reference: {
+      bottle_id: bottle.id,
+      source: reference.source,
+      reference_price_usd: Number(reference.reference_price_usd),
+      reference_price_6m_ago: Number(
+        reference.reference_price_6m_ago ?? reference.reference_price_usd,
+      ),
+      reference_change_percent: Number(reference.reference_change_percent ?? 0),
+      source_url: reference.source_url,
+      updated_at: reference.updated_at,
+    },
+  };
+}
+
+async function replaceBottleReferencePrice(supabase, bottleId, referenceRow) {
   const {
     confidence_score,
     matched_name,
@@ -1079,7 +1544,11 @@ async function replaceBottleReferencePrice(supabase, bottleId, referenceRow) {
     ...dbRow
   } = referenceRow;
 
-  const { error } = await supabase.from("bottle_reference_prices").insert(dbRow);
+  const { data: insertedRow, error } = await supabase
+    .from("bottle_reference_prices")
+    .insert(dbRow)
+    .select("id")
+    .single();
   if (error) {
     if (error.message?.includes("Could not find the table 'public.bottle_reference_prices'")) {
       throw new Error(
@@ -1088,9 +1557,20 @@ async function replaceBottleReferencePrice(supabase, bottleId, referenceRow) {
     }
     throw new Error(`Unable to save reference price for ${bottleId}: ${error.message}`);
   }
+
+  const { error: cleanupError } = await supabase
+    .from("bottle_reference_prices")
+    .delete()
+    .eq("bottle_id", bottleId)
+    .neq("id", insertedRow.id);
+  if (cleanupError) {
+    throw new Error(
+      `Saved the new reference price but could not remove older rows for ${bottleId}: ${cleanupError.message}`,
+    );
+  }
 }
 
-export async function syncBottleReferencePrice(supabase, bottleId) {
+export async function syncBottleReferencePrice(supabase, bottleId, options = {}) {
   const { data: bottle, error } = await supabase
     .from("bottles")
     .select("*")
@@ -1105,10 +1585,55 @@ export async function syncBottleReferencePrice(supabase, bottleId) {
     throw new Error(`Bottle ${bottleId} was not found.`);
   }
 
-  const reference = await resolveExternalReferencePrice(bottle);
+  if (options.onlyIfMissing) {
+    const { data: existingReferences, error: existingReferenceError } = await supabase
+      .from("bottle_reference_prices")
+      .select("source,reference_price_usd,source_url,updated_at")
+      .eq("bottle_id", bottle.id)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    if (existingReferenceError) {
+      throw new Error(
+        `Unable to check the existing reference price for ${bottle.id}: ${existingReferenceError.message}`,
+      );
+    }
+    const existingReference = existingReferences?.[0];
+    if (existingReference) {
+      return {
+        matched: true,
+        detail: {
+          bottleId: bottle.id,
+          bottleName: bottle.name,
+          source: existingReference.source,
+          referencePriceUsd: Number(existingReference.reference_price_usd),
+          confidenceScore: null,
+          matchedName: null,
+          matchedVolumeMl: null,
+          matchMethod: "existing_reference",
+          reusedFromBottleId: null,
+          diagnostics: [],
+          dryRun: Boolean(options.dryRun),
+          skipped: true,
+        },
+      };
+    }
+  }
+
+  const diagnostics = [];
+  const reusedReference = await findReusableExternalReference(supabase, bottle, diagnostics);
+  const reference =
+    reusedReference?.reference ??
+    (options.reuseOnly
+      ? null
+      : await resolveExternalReferencePrice(bottle, {
+          diagnostics,
+          apifyApiToken: options.apifyApiToken,
+        }));
 
   if (reference) {
-    await replaceBottleReferencePrice(supabase, bottle.id, reference);
+    if (!options.dryRun) {
+      await replaceBottleReferencePrice(supabase, bottle.id, reference);
+    }
     return {
       matched: true,
       detail: {
@@ -1119,11 +1644,14 @@ export async function syncBottleReferencePrice(supabase, bottleId) {
         confidenceScore: reference.confidence_score ?? null,
         matchedName: reference.matched_name ?? null,
         matchedVolumeMl: reference.matched_volume_ml ?? null,
+        matchMethod: reusedReference ? "existing_external_reference" : "external_lookup",
+        reusedFromBottleId: reusedReference?.reusedFromBottleId ?? null,
+        diagnostics,
+        dryRun: Boolean(options.dryRun),
       },
     };
   }
 
-  await supabase.from("bottle_reference_prices").delete().eq("bottle_id", bottle.id);
   return {
     matched: false,
     detail: {
@@ -1134,6 +1662,10 @@ export async function syncBottleReferencePrice(supabase, bottleId) {
       confidenceScore: null,
       matchedName: null,
       matchedVolumeMl: null,
+      matchMethod: null,
+      reusedFromBottleId: null,
+      diagnostics,
+      dryRun: Boolean(options.dryRun),
     },
   };
 }

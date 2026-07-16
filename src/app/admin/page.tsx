@@ -865,7 +865,7 @@ export default function AdminPage() {
       <div className="panel p-6">
         <p className="text-xs uppercase tracking-[0.24em] text-cask">News</p>
         <h2 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-semibold text-ink">
-          Run news import
+          NEW Update
         </h2>
         <p className="mt-4 text-sm leading-6 text-ink/65">
           Refresh curated news items and rebuild the site feed from the approved sources.
@@ -876,7 +876,7 @@ export default function AdminPage() {
           disabled={!newsImportActionsEnabled || serverStatus.newsImport.running}
           className="mt-5 rounded-full bg-ink px-4 py-2 text-sm font-medium text-shell transition hover:bg-ink/90 disabled:opacity-60"
         >
-          {serverStatus.newsImport.running ? "News Import Running..." : "Run News Import"}
+          {serverStatus.newsImport.running ? "NEW Update Running..." : "NEW Update"}
         </button>
         {!newsImportActionsEnabled ? (
           <p className="mt-3 text-sm text-ink/55">

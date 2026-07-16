@@ -13,6 +13,7 @@
     "import:whisky-catalog": "bash scripts/db/import-whisky-catalog.sh",
     "news:import": "node scripts/news/import-news.mjs",
     "reference:sync": "node scripts/reference/sync-reference-prices.mjs",
+    "reference:test": "node --test scripts/reference/reference-matching.test.mjs",
     "lint": "next lint",
     "export": "npm run build",
     "deploy": "npm run build"
