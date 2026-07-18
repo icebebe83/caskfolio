@@ -171,6 +171,8 @@ export default function AdminPage() {
   const [newsImageDrafts, setNewsImageDrafts] = useState<Record<string, string>>({});
   const [newsImageFiles, setNewsImageFiles] = useState<Record<string, File | null>>({});
   const [applyingNewsImageId, setApplyingNewsImageId] = useState("");
+  const [newsImportSubmitting, setNewsImportSubmitting] = useState(false);
+  const newsImportInFlightRef = useRef(false);
   const newsImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const newsImportActionsEnabled = true;
 
@@ -661,6 +663,10 @@ export default function AdminPage() {
       setError("This action is not available in production yet.");
       return;
     }
+    if (newsImportInFlightRef.current || serverStatus.newsImport.running) return;
+
+    newsImportInFlightRef.current = true;
+    setNewsImportSubmitting(true);
     try {
       setError("");
       setMessage("");
@@ -670,6 +676,9 @@ export default function AdminPage() {
       await refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to start news import.");
+    } finally {
+      newsImportInFlightRef.current = false;
+      setNewsImportSubmitting(false);
     }
   };
 
@@ -873,11 +882,21 @@ export default function AdminPage() {
         <button
           type="button"
           onClick={onRunNewsImport}
-          disabled={!newsImportActionsEnabled || serverStatus.newsImport.running}
+          disabled={
+            !newsImportActionsEnabled || newsImportSubmitting || serverStatus.newsImport.running
+          }
+          aria-busy={newsImportSubmitting || serverStatus.newsImport.running}
           className="mt-5 rounded-full bg-ink px-4 py-2 text-sm font-medium text-shell transition hover:bg-ink/90 disabled:opacity-60"
         >
-          {serverStatus.newsImport.running ? "NEW Update Running..." : "NEW Update"}
+          {newsImportSubmitting || serverStatus.newsImport.running
+            ? "Updating News..."
+            : "NEW Update"}
         </button>
+        {newsImportSubmitting || serverStatus.newsImport.running ? (
+          <p className="mt-3 text-sm font-medium text-cask" role="status" aria-live="polite">
+            News update is running. This can take about a minute. Please do not click again.
+          </p>
+        ) : null}
         {!newsImportActionsEnabled ? (
           <p className="mt-3 text-sm text-ink/55">
             This action is not available in production yet.
