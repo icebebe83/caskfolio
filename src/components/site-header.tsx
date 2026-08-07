@@ -199,6 +199,7 @@ export function SiteHeader() {
                 <Link
                   key={item.href}
                   href={item.href}
+                  prefetch={pathname !== "/"}
                   onClick={() => {
                     setIsBottleMenuHovered(false);
                     setIsBottleMenuOpen(false);
@@ -216,7 +217,11 @@ export function SiteHeader() {
             )}
           </nav>
 
-          <Link href="/" className="order-1 flex items-center justify-center gap-3 lg:order-2">
+          <Link
+            href="/"
+            prefetch={pathname !== "/"}
+            className="order-1 flex items-center justify-center gap-3 lg:order-2"
+          >
             <div className="text-center">
               <p className="text-[1.75rem] font-black tracking-[-0.05em] text-[#111111] sm:text-[1.95rem] lg:text-3xl">Caskfolio</p>
             </div>
@@ -226,6 +231,7 @@ export function SiteHeader() {
             {user ? (
               <Link
                 href="/mypage"
+                prefetch={pathname !== "/"}
                 onClick={() => {
                   setIsBottleMenuHovered(false);
                   setIsBottleMenuOpen(false);
@@ -242,6 +248,7 @@ export function SiteHeader() {
             ) : null}
             <Link
               href="/explore?view=search"
+              prefetch={pathname !== "/"}
               onClick={() => {
                 setIsBottleMenuHovered(false);
                 setIsBottleMenuOpen(false);
@@ -310,6 +317,7 @@ export function SiteHeader() {
             ) : (
               <Link
                 href="/login"
+                prefetch={pathname !== "/"}
                 onClick={() => {
                   setIsBottleMenuHovered(false);
                   setIsBottleMenuOpen(false);

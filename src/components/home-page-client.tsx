@@ -158,6 +158,7 @@ export function HomePageClient({ initialData }: { initialData: HomepageData }) {
             <div className="mt-6">
               <Link
                 href={activeHero.buttonLink}
+                prefetch={false}
                 className="inline-flex items-center bg-[#111111] px-6 py-3 text-[11px] font-extrabold uppercase tracking-[0.22em] text-white transition-colors hover:bg-black sm:px-7 sm:py-3.5 sm:text-[12px]"
               >
                 {activeHero.buttonLabel}
@@ -414,13 +415,13 @@ export function HomePageClient({ initialData }: { initialData: HomepageData }) {
                 {language === "kr" ? "메뉴" : "Navigation"}
               </p>
               <div className="mt-6 flex flex-col gap-5 text-sm text-[#111111]">
-                <Link href="/" className="hover:text-[#8d5b33]">
+                <Link href="/" prefetch={false} className="hover:text-[#8d5b33]">
                   {language === "kr" ? "마켓" : "Market"}
                 </Link>
-                <Link href="/explore" className="hover:text-[#8d5b33]">
+                <Link href="/explore" prefetch={false} className="hover:text-[#8d5b33]">
                   {language === "kr" ? "바틀" : "Bottles"}
                 </Link>
-                <Link href="/submit" className="hover:text-[#8d5b33]">
+                <Link href="/submit" prefetch={false} className="hover:text-[#8d5b33]">
                   {language === "kr" ? "등록" : "Register"}
                 </Link>
               </div>
@@ -431,13 +432,13 @@ export function HomePageClient({ initialData }: { initialData: HomepageData }) {
                 {language === "kr" ? "정책" : "Legal"}
               </p>
               <div className="mt-6 flex flex-col gap-5 text-sm text-[#111111]">
-                <Link href="/privacy-policy" className="hover:text-[#8d5b33]">
+                <Link href="/privacy-policy" prefetch={false} className="hover:text-[#8d5b33]">
                   {language === "kr" ? "개인정보처리방침" : "Privacy Policy"}
                 </Link>
-                <Link href="/terms-of-service" className="hover:text-[#8d5b33]">
+                <Link href="/terms-of-service" prefetch={false} className="hover:text-[#8d5b33]">
                   {language === "kr" ? "이용약관" : "Terms of Service"}
                 </Link>
-                <Link href="/listing-policy" className="hover:text-[#8d5b33]">
+                <Link href="/listing-policy" prefetch={false} className="hover:text-[#8d5b33]">
                   {language === "kr" ? "등록 정책" : "Listing Policy"}
                 </Link>
               </div>
