@@ -11,10 +11,9 @@ import { CATEGORIES, matchesCategoryFilter } from "@/lib/constants";
 import { tCategory } from "@/lib/i18n";
 import type { HomepageData } from "@/lib/homepage-data";
 
-const INITIAL_VISIBLE = 8;
+const INITIAL_VISIBLE = 10;
 const PAGE_SIZE = 8;
 const MAX_VISIBLE = 24;
-const LATEST_LISTINGS_VISIBLE = 10;
 
 export function HomePageClient({ initialData }: { initialData: HomepageData }) {
   const router = useRouter();
@@ -66,7 +65,7 @@ export function HomePageClient({ initialData }: { initialData: HomepageData }) {
 
   useEffect(() => {
     if (!sentinelRef.current) return;
-    if (visibleCount >= Math.min(filteredEntries.length, MAX_VISIBLE)) return;
+    if (visibleCount >= Math.min(filteredLatestEntries.length, MAX_VISIBLE)) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -74,7 +73,10 @@ export function HomePageClient({ initialData }: { initialData: HomepageData }) {
         if (!firstEntry?.isIntersecting) return;
 
         setVisibleCount((current) =>
-          Math.min(current + PAGE_SIZE, Math.min(filteredEntries.length, MAX_VISIBLE)),
+          Math.min(
+            current + PAGE_SIZE,
+            Math.min(filteredLatestEntries.length, MAX_VISIBLE),
+          ),
         );
       },
       { rootMargin: "300px 0px" },
@@ -83,12 +85,15 @@ export function HomePageClient({ initialData }: { initialData: HomepageData }) {
     observer.observe(sentinelRef.current);
 
     return () => observer.disconnect();
-  }, [filteredEntries.length, visibleCount]);
+  }, [filteredLatestEntries.length, visibleCount]);
 
-  const visibleEntries = filteredEntries.slice(0, Math.min(visibleCount, MAX_VISIBLE));
   const hotEntries = filteredEntries.filter((entry) => entry.hotBottle).slice(0, 5);
-  const latestEntries = filteredLatestEntries.slice(0, LATEST_LISTINGS_VISIBLE);
-  const canLoadMore = visibleEntries.length < Math.min(filteredEntries.length, MAX_VISIBLE);
+  const latestEntries = filteredLatestEntries.slice(
+    0,
+    Math.min(visibleCount, MAX_VISIBLE),
+  );
+  const canLoadMore =
+    latestEntries.length < Math.min(filteredLatestEntries.length, MAX_VISIBLE);
   const defaultHero = {
     imageUrl: "",
     headline:
@@ -281,7 +286,7 @@ export function HomePageClient({ initialData }: { initialData: HomepageData }) {
 
       <section className="bg-[#f3f4f2] py-12 sm:py-16 lg:py-20">
         <div className="mx-auto max-w-[1440px] px-4 sm:px-6 lg:px-8">
-          {!visibleEntries.length ? (
+          {!filteredEntries.length ? (
             <EmptyState
               title={
                 language === "kr"
@@ -356,7 +361,10 @@ export function HomePageClient({ initialData }: { initialData: HomepageData }) {
                 type="button"
                 onClick={() =>
                   setVisibleCount((current) =>
-                    Math.min(current + PAGE_SIZE, Math.min(filteredEntries.length, MAX_VISIBLE)),
+                    Math.min(
+                      current + PAGE_SIZE,
+                      Math.min(filteredLatestEntries.length, MAX_VISIBLE),
+                    ),
                   )
                 }
                 className="border-b border-[#8f877d] pb-2 text-[12px] font-extrabold uppercase tracking-[0.28em] text-[#111111] transition-colors hover:border-[#111111]"
