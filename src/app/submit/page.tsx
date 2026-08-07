@@ -299,7 +299,9 @@ export default function SubmitPage() {
   const numericPrice = Number(priceValue || 0);
   const normalizedUsd = priceToUsd(numericPrice, inputCurrency, fxRate);
   const approxKrw = priceToKrw(numericPrice, inputCurrency, fxRate);
-  const pendingBottleName = newBottleName.trim() || bottleQuery.trim();
+  const pendingBottleName = isCreatingBottle
+    ? newBottleName.trim()
+    : bottleQuery.trim();
 
   const composeBottleBatch = (baseBatch: string, nextLabelVersion: string) => {
     const trimmedBatch = baseBatch.trim();
@@ -328,20 +330,32 @@ export default function SubmitPage() {
     );
   };
 
-  const applyBottleAutofill = (match: Bottle | null) => {
-    if (!match) return;
+  const startNewBottleDraft = (query: string) => {
+    const nextName = sanitizeEnglishBottleText(query.trim());
+    const match = findBottleAutofillMatch(nextName);
 
-    setNewBottleCategory(match.category);
-    setNewBottleBrand((current) => current.trim() || match.brand || current);
-    setNewBottleAbv((current) => current.trim() || (match.abv ? String(match.abv) : current));
-    setNewBottleVolumeMl((current) =>
-      current.trim() && current !== "750" ? current : String(match.volumeMl || 750),
-    );
+    setSelectedBottle(null);
+    setIsCreatingBottle(true);
+    setNewBottleCategory(match?.category ?? "Bourbon");
+    setNewBottleName(nextName);
+    setNewBottleBrand(match ? sanitizeEnglishBottleText(match.brand) : "");
+    setNewBottleBatch("");
+    setNewBottleAgeStatement("NAS");
+    setNewBottleAbv(match?.abv ? String(match.abv) : "");
+    setNewBottleVolumeMl(match?.volumeMl ? String(match.volumeMl) : "750");
+    setInvalidBottleFields(new Set());
     setAutofillStatus(
-      language === "kr"
-        ? `${match.name} 기준으로 브랜드, 카테고리, ABV, 용량을 채웠습니다.`
-        : `Filled brand, category, ABV, and volume from ${match.name}.`,
+      match
+        ? language === "kr"
+          ? `${match.name} 기준으로 브랜드, 카테고리, ABV, 용량을 채웠습니다.`
+          : `Filled brand, category, ABV, and volume from ${match.name}.`
+        : "",
     );
+    setError("");
+
+    window.setTimeout(() => {
+      document.getElementById(fieldIds.newName)?.focus();
+    }, 0);
   };
 
   const focusFirstMissingBottleField = (missingFields: Set<string>) => {
@@ -448,14 +462,24 @@ export default function SubmitPage() {
     const currentBottle = !isCreatingBottle ? selectedBottle ?? exactQueryMatch ?? null : null;
 
     if (!currentBottle && !isCreatingBottle && pendingBottleName) {
-      setIsCreatingBottle(true);
-      setNewBottleName(sanitizeEnglishBottleText(pendingBottleName));
-      applyBottleAutofill(findBottleAutofillMatch(pendingBottleName));
+      startNewBottleDraft(pendingBottleName);
       setError(
         language === "kr"
           ? "새 바틀 정보를 확인해주세요. 브랜드, ABV, 용량은 필수입니다."
           : "Review the new bottle details. Brand, ABV, and volume are required.",
       );
+      return;
+    }
+
+    if (isCreatingBottle && !pendingBottleName) {
+      setError(
+        language === "kr"
+          ? "새 바틀 이름을 입력해주세요."
+          : "Enter a name for the new bottle.",
+      );
+      window.setTimeout(() => {
+        document.getElementById(fieldIds.newName)?.focus();
+      }, 0);
       return;
     }
 
@@ -807,25 +831,17 @@ export default function SubmitPage() {
                 );
                 setSelectedBottle(exactMatch ?? null);
               }}
-              emptyAction={
-                bottleQuery.trim() ? (
-                  <button
-                    type="button"
-                    disabled={bottlesLoading}
-                    onClick={() => {
-                      setIsCreatingBottle(true);
-                      const nextName = sanitizeEnglishBottleText(bottleQuery.trim());
-                      setNewBottleName(nextName);
-                      setNewBottleBrand("");
-                      setInvalidBottleFields(new Set());
-                      setError("");
-                      applyBottleAutofill(findBottleAutofillMatch(nextName));
-                    }}
-                    className="button-secondary px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {language === "kr" ? "새 바틀 만들기" : "Create new bottle"}
-                  </button>
-                ) : null
+              action={
+                <button
+                  type="button"
+                  disabled={bottlesLoading}
+                  onClick={() => {
+                    startNewBottleDraft(bottleQuery);
+                  }}
+                  className="button-secondary w-full justify-center px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {language === "kr" ? "새 바틀 만들기" : "Create new bottle"}
+                </button>
               }
             />
             {archiveStatus ? (

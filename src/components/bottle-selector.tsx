@@ -11,7 +11,7 @@ export function BottleSelector({
   onSelect,
   query,
   onQueryChange,
-  emptyAction,
+  action,
   inputId,
   loading = false,
 }: {
@@ -20,7 +20,7 @@ export function BottleSelector({
   onSelect: (bottle: Bottle) => void;
   query?: string;
   onQueryChange?: (query: string) => void;
-  emptyAction?: ReactNode;
+  action?: ReactNode;
   inputId?: string;
   loading?: boolean;
 }) {
@@ -55,6 +55,7 @@ export function BottleSelector({
         placeholder="Search bottle, brand, batch, or nickname"
         className="field w-full"
       />
+      {action ? <div>{action}</div> : null}
       <div className="max-h-72 space-y-2 overflow-y-auto rounded-2xl border border-[#e2ddd3] bg-[#f5f2ec] p-2">
         {filtered.map((bottle) => {
           const batchMetadata = parseBottleBatchMetadata(bottle.batch);
@@ -71,6 +72,7 @@ export function BottleSelector({
             <button
               key={bottle.id}
               type="button"
+              aria-pressed={selectedBottle?.id === bottle.id}
               onClick={() => onSelect(bottle)}
               className={`w-full rounded-2xl px-4 py-3 text-left transition ${
                 selectedBottle?.id === bottle.id
@@ -90,11 +92,10 @@ export function BottleSelector({
           );
         })}
         {!filtered.length ? (
-          <div className="space-y-3 px-2 py-3">
+          <div className="px-2 py-3">
             <p className="text-sm text-ink/50">
               {loading ? "Loading bottle archive..." : "No bottles matched your search."}
             </p>
-            {!loading ? emptyAction : null}
           </div>
         ) : null}
       </div>

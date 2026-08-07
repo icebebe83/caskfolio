@@ -81,6 +81,17 @@ export default function HomePage() {
     () => new Map(bottles.map((bottle) => [bottle.id, bottle])),
     [bottles],
   );
+  const marketEntryByBottleId = useMemo(() => {
+    const entryMap = new Map<string, (typeof bottleEntries)[number]>();
+
+    bottleEntries.forEach((entry) => {
+      entry.bottleIds.forEach((bottleId) => {
+        entryMap.set(bottleId, entry);
+      });
+    });
+
+    return entryMap;
+  }, [bottleEntries]);
   const filteredEntries = useMemo(() => {
     const query = search.trim().toLowerCase();
 
@@ -139,12 +150,22 @@ export default function HomePage() {
     .map((listing) => {
       const bottle = bottleMap.get(listing.bottleId);
       if (!bottle) return null;
+
+      const marketEntry =
+        marketEntryByBottleId.get(listing.bottleId) ??
+        buildBottleEntries([listing], [bottle], {
+          preferListingThumbnail: true,
+          fallbackToDefaultImage: true,
+        })[0];
+      if (!marketEntry) return null;
+
       return {
         id: listing.id,
         href: `/bottle?id=${bottle.id}`,
-        imageUrl: filteredEntries.find((entry) => entry.bottle.id === bottle.id)?.imageUrl || "",
+        imageUrl: marketEntry.imageUrl,
         name: bottle.name,
-        priceUsd: listing.normalizedPriceUsd,
+        priceUsd: marketEntry.priceUsd,
+        listingCount: marketEntry.listingCount,
       };
     })
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
@@ -416,7 +437,7 @@ export default function HomePage() {
                       imageUrl={entry.imageUrl}
                       name={entry.name}
                       priceUsd={entry.priceUsd}
-                      listingCount={1}
+                      listingCount={entry.listingCount}
                     />
                   ))}
                 </div>

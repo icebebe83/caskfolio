@@ -5,16 +5,29 @@ import {
   hasListingUploadedImage,
 } from "@/lib/media/images";
 import { getBottleBaseIdentityKey, getBottleBatchIdentityPart } from "@/lib/bottle-identity";
-import { toDate } from "@/lib/format";
+import { median, toDate } from "@/lib/format";
 import type { Bottle, Listing } from "@/lib/types";
 
 export type BottleMarketEntry = {
   bottle: Bottle;
+  bottleIds: string[];
   priceUsd: number;
   imageUrl: string;
   latestAt: number;
   listingCount: number;
 };
+
+export function getMarketMedianPrice(listings: Listing[]): number {
+  const activeListings = listings.filter((listing) => listing.status === "active");
+  const priceSource = activeListings.length ? activeListings : listings;
+  const medianPrice = median(
+    priceSource
+      .map((listing) => listing.normalizedPriceUsd)
+      .filter((price) => Number.isFinite(price)),
+  );
+
+  return Number.isFinite(medianPrice) ? medianPrice : 0;
+}
 
 export function buildBottleEntries(
   listings: Listing[],
@@ -79,9 +92,7 @@ export function buildBottleEntries(
         })[0] ?? null;
       if (!bottle) return null;
 
-      const activeListings = sortedListings.filter((listing) => listing.status === "active");
-      const priceSource = activeListings.length ? activeListings : sortedListings;
-      const cheapestPrice = Math.min(...priceSource.map((listing) => listing.normalizedPriceUsd));
+      const medianPrice = getMarketMedianPrice(sortedListings);
       const latestListing = sortedListings[0];
       const thumbnailSource = sortedListings.find((listing) => hasListingUploadedImage(listing));
       const thumbnailBottle = thumbnailSource
@@ -104,7 +115,8 @@ export function buildBottleEntries(
 
       return {
         bottle,
-        priceUsd: Number.isFinite(cheapestPrice) ? cheapestPrice : 0,
+        bottleIds: [...group.bottles.keys()],
+        priceUsd: medianPrice,
         imageUrl,
         latestAt: toDate(latestListing?.createdAt)?.getTime() ?? 0,
         listingCount: sortedListings.length,

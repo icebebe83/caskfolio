@@ -9,6 +9,7 @@ import { ListingCard } from "@/components/listing-card";
 import { PriceHistoryChart } from "@/components/price-history-chart";
 import { useAuth, useLanguage } from "@/components/providers";
 import { getEquivalentBottleGroup } from "@/lib/bottle-identity";
+import { getMarketMedianPrice } from "@/lib/bottle-market";
 import { getBottleImageForSurface, getListingImageForSurface } from "@/lib/media/images";
 import { resolveUsdKrwRate } from "@/lib/fx";
 import {
@@ -16,7 +17,6 @@ import {
   formatKrw,
   formatListingStatus,
   formatUsd,
-  median,
   parseBottleBatchMetadata,
   toDate,
 } from "@/lib/format";
@@ -74,6 +74,7 @@ function BottlePageContent() {
   const [noteMessage, setNoteMessage] = useState("");
   const [fxRate, setFxRate] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadedBottleId, setLoadedBottleId] = useState("");
   const [error, setError] = useState("");
   const [showAllRecentListings, setShowAllRecentListings] = useState(false);
   const [isWishlisted, setIsWishlisted] = useState(false);
@@ -82,7 +83,11 @@ function BottlePageContent() {
   const [wishlistMessage, setWishlistMessage] = useState("");
 
   useEffect(() => {
+    setLoading(true);
+    setError("");
+
     if (!bottleId) {
+      setLoadedBottleId("");
       setLoading(false);
       return;
     }
@@ -96,9 +101,12 @@ function BottlePageContent() {
       setReferencePrice(null);
       setCollectorNotes([]);
       setFxRate(0);
+      setLoadedBottleId(bottleId);
       setLoading(false);
       return;
     }
+
+    let cancelled = false;
 
     const load = async () => {
       try {
@@ -109,6 +117,8 @@ function BottlePageContent() {
           fetchAllListings(200),
           fetchBottleReferencePrice(bottleId),
         ]);
+        if (cancelled) return;
+
         const equivalentBottleIds =
           bottleDoc && bottleDocs.length
             ? getEquivalentBottleGroup(bottleDocs, bottleDoc).map((item) => item.id)
@@ -117,6 +127,8 @@ function BottlePageContent() {
           fetchListingsForBottleIds(equivalentBottleIds),
           fetchCollectorNotes(equivalentBottleIds),
         ]);
+        if (cancelled) return;
+
         setBottle(bottleDoc);
         setEquivalentBottleIds(equivalentBottleIds);
         setAllBottles(bottleDocs);
@@ -125,7 +137,10 @@ function BottlePageContent() {
         setCollectorNotes(noteDocs);
         setReferencePrice(referenceDoc);
         setFxRate(fxState.rate);
+        setLoadedBottleId(bottleId);
       } catch (nextError) {
+        if (cancelled) return;
+
         setBottle(null);
         setListings([]);
         setEquivalentBottleIds([]);
@@ -134,13 +149,20 @@ function BottlePageContent() {
         setReferencePrice(null);
         setCollectorNotes([]);
         setFxRate(0);
+        setLoadedBottleId(bottleId);
         setError(nextError instanceof Error ? nextError.message : "Unable to load bottle.");
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
     void load();
+
+    return () => {
+      cancelled = true;
+    };
   }, [bottleId]);
 
   useEffect(() => {
@@ -371,21 +393,37 @@ function BottlePageContent() {
     );
   }
 
+  if (loading || loadedBottleId !== bottleId) {
+    return (
+      <section
+        aria-busy="true"
+        aria-live="polite"
+        className="flex min-h-[50vh] items-center justify-center rounded-3xl border border-[#e4dfd6] bg-white px-6 py-16 text-center"
+      >
+        <div className="max-w-md">
+          <p className="eyebrow">{language === "kr" ? "바틀 상세" : "Bottle detail"}</p>
+          <h1 className="mt-3 text-2xl font-bold tracking-[-0.03em] text-[#111111]">
+            {language === "kr" ? "바틀 정보를 불러오는 중입니다" : "Loading bottle details"}
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-[#666159]">
+            {language === "kr"
+              ? "가격과 등록 정보를 확인하고 있습니다."
+              : "Checking the latest price and listing information."}
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   if (error) {
     return <EmptyState title={language === "kr" ? "바틀을 불러올 수 없습니다" : "Bottle unavailable"} description={error} />;
   }
 
-  if (!loading && !bottle) {
+  if (!bottle) {
     return <EmptyState title={language === "kr" ? "바틀을 찾을 수 없습니다" : "Bottle not found"} description={language === "kr" ? "이 바틀 ID는 아카이브에 없습니다." : "This bottle id is not in the archive."} />;
   }
 
-  const last30Days = listings.filter((listing) => {
-    const createdAt = toDate(listing.createdAt);
-    if (!createdAt) return false;
-    return createdAt.getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000;
-  });
-
-  const median30d = median(last30Days.map((listing) => listing.normalizedPriceUsd));
+  const marketMedian = getMarketMedianPrice(listings);
   const activeListings = listings.filter((listing) => listing.status === "active");
   const inactiveListings = listings.filter((listing) => listing.status === "inactive");
   const sortedListings = [...listings].sort(
@@ -429,10 +467,7 @@ function BottlePageContent() {
     .slice(0, 4)
     .map((item) => {
       const relatedListings = allListings.filter((listing) => listing.bottleId === item.id);
-      const relatedPrice =
-        relatedListings.length > 0
-          ? Math.min(...relatedListings.map((listing) => listing.normalizedPriceUsd))
-          : 0;
+      const relatedPrice = getMarketMedianPrice(relatedListings);
 
       return {
         bottle: item,
@@ -503,11 +538,11 @@ function BottlePageContent() {
                 {language === "kr" ? "시장 중간값" : "Market median"}
               </span>
               <span className="text-4xl font-black tracking-[-0.04em] text-[#111111]">
-                {formatUsd(median30d || latestListing?.normalizedPriceUsd || 0)}
+                {formatUsd(marketMedian)}
               </span>
               <span className="mt-2 text-sm text-[#7b746a]">
                 {fxRate
-                  ? formatKrw((median30d || latestListing?.normalizedPriceUsd || 0) * fxRate)
+                  ? formatKrw(marketMedian * fxRate)
                   : language === "kr" ? "예상 KRW 없음" : "Approx KRW unavailable"}
               </span>
             </div>
