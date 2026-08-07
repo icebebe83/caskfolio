@@ -52,6 +52,23 @@ export function isDefaultRegisterBottleImage(imageUrl?: string | null): boolean 
   return Boolean(imageUrl && imageUrl.includes(DEFAULT_REGISTER_BOTTLE_IMAGE));
 }
 
+export function applyNetlifyImageFallback(image: HTMLImageElement): void {
+  if (image.dataset.originalFallback === "true") return;
+
+  try {
+    const optimizedUrl = new URL(image.currentSrc || image.src);
+    if (optimizedUrl.pathname !== "/.netlify/images") return;
+
+    const originalUrl = optimizedUrl.searchParams.get("url");
+    if (!originalUrl || originalUrl === image.src) return;
+
+    image.dataset.originalFallback = "true";
+    image.src = originalUrl;
+  } catch {
+    // Leave the original error state intact when the optimized URL is malformed.
+  }
+}
+
 export function getBottleCardImage(
   bottle?: Pick<Bottle, "masterPreviewImageUrl" | "masterImageUrl" | "imageUrl"> | null,
 ): string {

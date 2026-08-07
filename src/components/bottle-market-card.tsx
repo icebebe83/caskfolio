@@ -3,7 +3,10 @@
 import Link from "next/link";
 
 import { useLanguage } from "@/components/providers";
-import { isDefaultRegisterBottleImage } from "@/lib/media/images";
+import {
+  applyNetlifyImageFallback,
+  isDefaultRegisterBottleImage,
+} from "@/lib/media/images";
 import { formatUsd } from "@/lib/format";
 
 export function BottleMarketCard({
@@ -50,6 +53,7 @@ export function BottleMarketCard({
             loading="lazy"
             fetchPriority="auto"
             decoding="async"
+            onError={(event) => applyNetlifyImageFallback(event.currentTarget)}
             className={`w-full transition duration-700 ${
               compact ? "aspect-[0.52] sm:aspect-[0.58] md:aspect-[0.64] lg:aspect-[0.72] xl:aspect-[3/4]" : "aspect-[3/4]"
             } bg-[#f4f4f1] object-contain object-center ${

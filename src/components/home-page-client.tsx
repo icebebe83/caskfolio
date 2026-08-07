@@ -10,6 +10,7 @@ import { useLanguage } from "@/components/providers";
 import { CATEGORIES, matchesCategoryFilter } from "@/lib/constants";
 import { tCategory } from "@/lib/i18n";
 import type { HomepageData } from "@/lib/homepage-data";
+import { applyNetlifyImageFallback } from "@/lib/media/image-selection";
 
 const INITIAL_VISIBLE = 10;
 const PAGE_SIZE = 8;
@@ -222,6 +223,9 @@ export function HomePageClient({ initialData }: { initialData: HomepageData }) {
                     className="h-full w-full object-cover"
                     loading="eager"
                     decoding="async"
+                    onError={(event) =>
+                      applyNetlifyImageFallback(event.currentTarget)
+                    }
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-white/18 to-transparent" />
                   {activeBanners.length > 1 ? (
