@@ -3,7 +3,7 @@
   publish = ".next"
 
 [build.environment]
-  CASKFOLIO_IMAGE_CDN = "true"
+  NEXT_PUBLIC_CASKFOLIO_IMAGE_CDN = "true"
 
 [images]
   remote_images = [
