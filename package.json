@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "preview": "npm run build && npx serve@14.2.4 out -l 3007",
+    "preview": "npm run build && next start -p 3007",
     "preview:restart": "bash scripts/dev/run_preview.sh",
     "preview:stable": "npm run build && bash scripts/dev/run_preview.sh",
     "supabase:validate": "node scripts/db/validate-supabase.mjs",

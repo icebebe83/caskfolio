@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 
 import type { AppUser } from "@/lib/types";
 import { syncAuthProfile } from "@/lib/data/store";
@@ -61,6 +61,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [language, setLanguageState] = useState<Language>("en");
+  const profileSyncSignatureRef = useRef("");
 
   useEffect(() => {
     if (!supabase) {
@@ -79,6 +80,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         | undefined,
     ) => {
       if (!nextUser) {
+        profileSyncSignatureRef.current = "";
         setUser(null);
         setLoading(false);
         return;
@@ -86,6 +88,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
       setUser(mapSessionUser(nextUser));
       setLoading(false);
+      const profileSyncSignature = `${nextUser.id}:${JSON.stringify(
+        nextUser.user_metadata ?? {},
+      )}`;
+      if (profileSyncSignatureRef.current === profileSyncSignature) return;
+      profileSyncSignatureRef.current = profileSyncSignature;
+
       void syncAuthProfile(nextUser)
         .then((profileUser) => {
           setUser(profileUser);

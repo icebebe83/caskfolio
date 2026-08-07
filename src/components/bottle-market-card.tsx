@@ -47,6 +47,9 @@ export function BottleMarketCard({
           <img
             src={imageUrl}
             alt={name}
+            loading="lazy"
+            fetchPriority="auto"
+            decoding="async"
             className={`w-full transition duration-700 ${
               compact ? "aspect-[0.52] sm:aspect-[0.58] md:aspect-[0.64] lg:aspect-[0.72] xl:aspect-[3/4]" : "aspect-[3/4]"
             } bg-[#f4f4f1] object-contain object-center ${

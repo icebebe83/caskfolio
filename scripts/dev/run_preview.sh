@@ -12,4 +12,4 @@ if [ -n "${existing_pids}" ]; then
 fi
 
 cd "${ROOT_DIR}"
-exec python3 scripts/dev/preview_server.py
+exec ./node_modules/.bin/next start -p "${PORT}"

@@ -1,6 +1,14 @@
 [build]
   command = "npm run build"
-  publish = "out"
+  publish = ".next"
+
+[images]
+  remote_images = [
+    "https://atrjypugrnmnbgxockeu\\.supabase\\.co/.*",
+    "https://d1e2y5wc27crnp\\.cloudfront\\.net/.*",
+    "https://(?:www\\.)?whiskyadvocate\\.com/.*",
+    "https://(?:www\\.)?woodencork\\.com/.*",
+  ]
 
 [[headers]]
   for = "/*"

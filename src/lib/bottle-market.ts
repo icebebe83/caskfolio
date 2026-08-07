@@ -3,7 +3,7 @@ import {
   getBottleImageForSurface,
   getListingImageForSurface,
   hasListingUploadedImage,
-} from "@/lib/media/images";
+} from "@/lib/media/image-selection";
 import { getBottleBaseIdentityKey, getBottleBatchIdentityPart } from "@/lib/bottle-identity";
 import { median, toDate } from "@/lib/format";
 import type { Bottle, Listing } from "@/lib/types";
