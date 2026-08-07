@@ -217,7 +217,7 @@ function optimizeHomepageImage(
   quality: number,
   supabaseHost: string,
 ): string {
-  if (!source || process.env.NETLIFY !== "true") return source;
+  if (!source || process.env.CASKFOLIO_IMAGE_CDN !== "true") return source;
 
   let isAllowed = source.startsWith("/");
   if (!isAllowed) {
