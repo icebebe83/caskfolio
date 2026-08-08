@@ -53,7 +53,3 @@ export default async (request) => {
     return Response.json({ error: message }, { status: 500 });
   }
 };
-
-export const config = {
-  path: "/__reference/sync-bottle",
-};

@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/empty-state";
 import { SetupNotice } from "@/components/setup-notice";
 import {
   fetchAdminStatus,
+  fetchNewsImportStatus,
   runNewsImportAction,
 } from "@/lib/admin/actions";
 import { useAuth } from "@/components/providers";
@@ -172,7 +173,9 @@ export default function AdminPage() {
   const [newsImageFiles, setNewsImageFiles] = useState<Record<string, File | null>>({});
   const [applyingNewsImageId, setApplyingNewsImageId] = useState("");
   const [newsImportSubmitting, setNewsImportSubmitting] = useState(false);
+  const [newsImportError, setNewsImportError] = useState("");
   const newsImportInFlightRef = useRef(false);
+  const newsImportWasRunningRef = useRef(false);
   const newsImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const newsImportActionsEnabled = true;
 
@@ -220,9 +223,40 @@ export default function AdminPage() {
     }
   };
 
+  const applyNewsImportStatus = async (
+    newsImport: AdminServerStatus["newsImport"],
+    fullStatus?: AdminServerStatus,
+  ) => {
+    const wasRunning = newsImportWasRunningRef.current;
+    newsImportWasRunningRef.current = newsImport.running;
+    setServerStatus((current) => fullStatus ?? { ...current, newsImport });
+
+    if (!wasRunning || newsImport.running) return;
+
+    if (newsImport.status === "success") {
+      const newsDocs = await fetchAdminNews();
+      setNewsItems(newsDocs);
+      setNewsImageDrafts(Object.fromEntries(newsDocs.map((item) => [item.id, item.imageUrl])));
+      setNewsImportError("");
+      setMessage(newsImport.message || "News import completed.");
+      return;
+    }
+
+    if (newsImport.status === "failure") {
+      setNewsImportError(newsImport.lastError || "News import failed.");
+    }
+  };
+
   const loadServerStatus = async () => {
     const data = await fetchAdminStatus();
-    if (data) setServerStatus(data);
+    if (!data) return;
+    await applyNewsImportStatus(data.newsImport, data);
+  };
+
+  const loadNewsImportStatus = async () => {
+    const newsImport = await fetchNewsImportStatus();
+    if (!newsImport) return;
+    await applyNewsImportStatus(newsImport);
   };
 
   useEffect(() => {
@@ -254,12 +288,12 @@ export default function AdminPage() {
   }, [user]);
 
   useEffect(() => {
-    if (!isAdmin) return;
-    void loadServerStatus();
-    if (!serverStatus.newsImport.running) return;
+    if (!isAdmin || !serverStatus.newsImport.running) return;
+
+    void loadNewsImportStatus();
 
     const interval = window.setInterval(() => {
-      void loadServerStatus();
+      void loadNewsImportStatus();
     }, 2500);
 
     return () => window.clearInterval(interval);
@@ -670,12 +704,23 @@ export default function AdminPage() {
     try {
       setError("");
       setMessage("");
+      setNewsImportError("");
       const data = await runNewsImportAction();
-      setServerStatus(data);
-      setMessage(data.newsImport.message || "News import completed.");
-      await refresh();
+      newsImportWasRunningRef.current = data.newsImport.running;
+      setServerStatus((current) => ({
+        ...current,
+        newsImport: data.newsImport,
+        settings: {
+          ...current.settings,
+          newsIngestion: data.settings.newsIngestion,
+        },
+      }));
+      setMessage(data.newsImport.message || "News import started.");
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to start news import.");
+      const nextMessage =
+        nextError instanceof Error ? nextError.message : "Unable to start news import.";
+      setNewsImportError(nextMessage);
+      setError(nextMessage);
     } finally {
       newsImportInFlightRef.current = false;
       setNewsImportSubmitting(false);
@@ -895,6 +940,11 @@ export default function AdminPage() {
         {newsImportSubmitting || serverStatus.newsImport.running ? (
           <p className="mt-3 text-sm font-medium text-cask" role="status" aria-live="polite">
             News update is running. This can take about a minute. Please do not click again.
+          </p>
+        ) : null}
+        {newsImportError ? (
+          <p className="mt-3 text-sm font-medium text-red-600" role="alert">
+            {newsImportError}
           </p>
         ) : null}
         {!newsImportActionsEnabled ? (

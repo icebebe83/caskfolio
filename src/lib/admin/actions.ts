@@ -21,6 +21,24 @@ export async function fetchAdminStatus(): Promise<AdminServerStatus | null> {
   }
 }
 
+export async function fetchNewsImportStatus(): Promise<
+  AdminServerStatus["newsImport"] | null
+> {
+  try {
+    const response = await fetch("/__admin/news-import/status", {
+      cache: "no-store",
+      headers: await getAuthHeaders(),
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as {
+      newsImport?: AdminServerStatus["newsImport"];
+    };
+    return data.newsImport ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function runReferenceSyncAction(): Promise<AdminServerStatus> {
   const response = await fetch("/__admin/reference-sync", {
     method: "POST",
@@ -51,17 +69,8 @@ export async function runNewsImportAction(): Promise<AdminServerStatus> {
 
   if (!response.ok && response.status !== 202) {
     const data = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(data?.error || "Unable to start news import.");
+    throw new Error(data?.error || `Unable to start news import (HTTP ${response.status}).`);
   }
 
-  const data = (await response.json()) as AdminServerStatus;
-  await appendAuditLog({
-    action: "news_import.triggered",
-    targetType: "system",
-    details: {
-      status: data.newsImport.status,
-      running: data.newsImport.running,
-    },
-  });
-  return data;
+  return (await response.json()) as AdminServerStatus;
 }

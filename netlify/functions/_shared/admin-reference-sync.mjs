@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { createIdleNewsImportStatus } from "./news-import-status.mjs";
 
 export function getSupabaseAdminEnv() {
   const getEnv = (key) => Netlify.env.get(key) ?? process.env[key] ?? "";
@@ -20,16 +21,21 @@ export function createSupabaseAdminClient() {
 }
 
 export async function requireAdminUser(request, supabase) {
+  const authError = (message, status) =>
+    Response.json(
+      { error: message },
+      { status, headers: { "cache-control": "no-store" } },
+    );
   const authHeader = request.headers.get("authorization") ?? "";
   const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
   if (!token) {
-    return { error: Response.json({ error: "Authentication required." }, { status: 401 }) };
+    return { error: authError("Authentication required.", 401) };
   }
 
   const { data: userResult, error: userError } = await supabase.auth.getUser(token);
   const user = userResult?.user;
   if (userError || !user) {
-    return { error: Response.json({ error: "Authentication required." }, { status: 401 }) };
+    return { error: authError("Authentication required.", 401) };
   }
 
   const { data: adminRow, error: adminError } = await supabase
@@ -39,7 +45,7 @@ export async function requireAdminUser(request, supabase) {
     .maybeSingle();
 
   if (adminError || !adminRow) {
-    return { error: Response.json({ error: "Admin access required." }, { status: 403 }) };
+    return { error: authError("Admin access required.", 403) };
   }
 
   return { user };
@@ -77,6 +83,7 @@ export function buildAdminServerStatus(input = {}) {
   const failedCount = Number(input.failedCount ?? missingCount);
   const processedCount = Number(input.processedCount ?? 0);
   const status = input.status ?? "idle";
+  const newsImport = input.newsImport ?? createIdleNewsImportStatus();
 
   return {
     referenceSync: {
@@ -94,25 +101,17 @@ export function buildAdminServerStatus(input = {}) {
       matchedCount,
       failedCount,
     },
-    newsImport: {
-      running: false,
-      status: "idle",
-      lastStartedAt: null,
-      lastFinishedAt: null,
-      lastSuccessAt: null,
-      lastError: null,
-      message: "",
-    },
+    newsImport,
     settings: {
       googleOAuth: { configured: true, label: "Configured" },
       rssSources: [],
       referenceSyncSchedule: "Manual · missing bottles only",
       lastSyncTime: status === "success" ? now : null,
       newsIngestion: {
-        available: true,
-        count: null,
-        lastUpdatedAt: null,
-        label: "Available",
+        available: newsImport.status !== "failure",
+        count: Number(newsImport.count ?? 0),
+        lastUpdatedAt: newsImport.lastSuccessAt ?? null,
+        label: newsImport.status === "failure" ? "Unavailable" : "Available",
       },
       processedCount,
       missingReferenceCount: missingCount,
