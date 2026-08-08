@@ -11,7 +11,7 @@
     "preview:stable": "npm run build && bash scripts/dev/run_preview.sh",
     "supabase:validate": "node scripts/db/validate-supabase.mjs",
     "import:whisky-catalog": "bash scripts/db/import-whisky-catalog.sh",
-    "news:import": "node scripts/news/import-news.mjs",
+    "news:import": "node scripts/news/import-news-cli.mjs",
     "reference:sync": "node scripts/reference/sync-reference-prices.mjs",
     "reference:test": "node --test scripts/reference/reference-matching.test.mjs",
     "lint": "next lint",

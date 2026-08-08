@@ -98,7 +98,3 @@ export default async (request) => {
     );
   }
 };
-
-export const config = {
-  path: "/__admin/reference-sync",
-};

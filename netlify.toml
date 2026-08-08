@@ -13,6 +13,36 @@
     "https://(?:www\\.)?woodencork\\.com/.*",
   ]
 
+[[redirects]]
+  from = "/__admin/status"
+  to = "/.netlify/functions/admin-status"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/__admin/reference-sync"
+  to = "/.netlify/functions/admin-reference-sync"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/__admin/news-import"
+  to = "/.netlify/functions/news-import"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/__admin/news-import/status"
+  to = "/.netlify/functions/news-import-status"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/__reference/sync-bottle"
+  to = "/.netlify/functions/reference-sync-bottle"
+  status = 200
+  force = true
+
 [[headers]]
   for = "/*"
   [headers.values]

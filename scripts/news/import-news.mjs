@@ -1,11 +1,4 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { createClient } from "@supabase/supabase-js";
-import { createNewsThumbnail, getNewsFallbackImage } from "./news-image-utils.mjs";
-import { loadProjectEnv } from "../shared/load-env.mjs";
-
-loadProjectEnv();
 
 const SOURCES = [
   { type: "rss", source: "The Whiskey Wash", url: "https://thewhiskeywash.com/feed/" },
@@ -26,9 +19,23 @@ const YOUTUBE_SOURCES = [
   },
 ];
 
-const OUTPUT_PATH = path.join(process.cwd(), "public", "news.json");
-const FALLBACK_IMAGE = getNewsFallbackImage();
-const STORAGE_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "caskindex-images";
+export const FALLBACK_IMAGE = "/news-fallback.png";
+const DEFAULT_STORAGE_BUCKET = "caskindex-images";
+const DEFAULT_FETCH_TIMEOUT_MS = 8_000;
+const DEFAULT_TEXT_RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024;
+const DEFAULT_IMAGE_RESPONSE_LIMIT_BYTES = 6 * 1024 * 1024;
+const DEFAULT_SOURCE_CONCURRENCY = 3;
+const DEFAULT_ARTICLE_CONCURRENCY = 4;
+const MAX_REDIRECTS = 3;
+const ALLOWED_RASTER_CONTENT_TYPES = new Set([
+  "image/avif",
+  "image/gif",
+  "image/jpeg",
+  "image/jpg",
+  "image/pjpeg",
+  "image/png",
+  "image/webp",
+]);
 const PRIORITY_RANK = { high: 3, medium: 2, low: 1 };
 const ALLOWED_SOURCES = new Set([...SOURCES, ...YOUTUBE_SOURCES].map((item) => item.source));
 const VIDEO_SOURCE_NAMES = new Set(YOUTUBE_SOURCES.map((item) => item.source));
@@ -456,22 +463,216 @@ function parseWhiskyAdvocateIndex(html, source) {
     .filter((article) => article.url);
 }
 
-async function fetchText(url) {
-  const response = await fetch(url, {
+function isPrivateIpv4(hostname) {
+  const parts = hostname.split(".");
+  if (parts.length !== 4 || parts.some((part) => !/^\d+$/.test(part))) return false;
+
+  const octets = parts.map(Number);
+  if (octets.some((octet) => octet < 0 || octet > 255)) return true;
+
+  const [first, second] = octets;
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    (first === 198 && (second === 18 || second === 19)) ||
+    first >= 224
+  );
+}
+
+function isPrivateLiteralHostname(hostname) {
+  const normalized = hostname.replace(/^\[|\]$/g, "").replace(/\.+$/, "").toLowerCase();
+  if (!normalized) return true;
+  if (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized.endsWith(".local") ||
+    normalized.endsWith(".localdomain")
+  ) {
+    return true;
+  }
+  if (isPrivateIpv4(normalized)) return true;
+  if (!normalized.includes(":")) return false;
+
+  return (
+    normalized === "::" ||
+    normalized === "::1" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    /^fe[89ab]/.test(normalized) ||
+    /^fe[c-f]/.test(normalized) ||
+    normalized.startsWith("ff") ||
+    normalized.startsWith("::ffff:")
+  );
+}
+
+export function assertSafeRemoteUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Remote URL is invalid.");
+  }
+
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Remote URL must use HTTP or HTTPS.");
+  }
+  if (url.username || url.password) {
+    throw new Error("Remote URL credentials are not allowed.");
+  }
+  if (isPrivateLiteralHostname(url.hostname)) {
+    throw new Error("Remote URL points to a private or local address.");
+  }
+
+  return url;
+}
+
+export async function mapWithConcurrency(items, requestedConcurrency, mapper) {
+  if (!items.length) return [];
+
+  const concurrency = Math.max(
+    1,
+    Math.min(items.length, Number.isFinite(requestedConcurrency) ? Math.floor(requestedConcurrency) : 1),
+  );
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  let hasFailure = false;
+  let failureReason;
+
+  const worker = async () => {
+    while (!hasFailure) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+
+      try {
+        results[index] = await mapper(items[index], index);
+      } catch (error) {
+        if (!hasFailure) {
+          hasFailure = true;
+          failureReason = error;
+        }
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  if (hasFailure) throw failureReason;
+  return results;
+}
+
+async function readLimitedResponse(response, maxBytes) {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`Remote response exceeds the ${maxBytes}-byte limit.`);
+  }
+  if (!response.body) return new Uint8Array();
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(`Remote response exceeds the ${maxBytes}-byte limit.`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const output = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
+export async function fetchRemoteBytes(
+  value,
+  {
+    fetchImpl,
+    headers,
+    maxBytes,
+    timeoutMs,
+  },
+) {
+  let currentUrl = assertSafeRemoteUrl(value);
+
+  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetchImpl(currentUrl, {
+        headers,
+        redirect: "manual",
+        signal: controller.signal,
+      });
+      const finalUrl = response.url ? assertSafeRemoteUrl(response.url) : currentUrl;
+
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get("location");
+        if (!location || redirectCount === MAX_REDIRECTS) {
+          throw new Error("Remote request exceeded the redirect limit.");
+        }
+        await response.body?.cancel().catch(() => undefined);
+        currentUrl = assertSafeRemoteUrl(new URL(location, finalUrl).toString());
+        continue;
+      }
+
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+
+      return {
+        bytes: await readLimitedResponse(response, maxBytes),
+        contentType: response.headers.get("content-type") || "",
+        url: finalUrl.toString(),
+      };
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`Remote request timed out after ${timeoutMs}ms.`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw new Error("Remote request exceeded the redirect limit.");
+}
+
+async function fetchText(url, network) {
+  const result = await fetchRemoteBytes(url, {
+    fetchImpl: network.fetchImpl,
     headers: {
       "user-agent": "Mozilla/5.0 CaskIndex News Curator",
       accept: "text/html,application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
     },
+    maxBytes: network.textResponseLimitBytes,
+    timeoutMs: network.timeoutMs,
   });
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
-  }
-  return response.text();
+  return new TextDecoder().decode(result.bytes);
 }
 
-async function extractArticleDetails(article) {
+async function extractArticleDetails(article, network) {
   try {
-    const html = await fetchText(article.url);
+    const html = await fetchText(article.url, network);
     const ogImage =
       html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
       html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i)?.[1] ||
@@ -502,25 +703,34 @@ async function extractArticleDetails(article) {
   }
 }
 
-async function collectArticles() {
-  const articles = [];
-
-  for (const source of [...SOURCES, ...YOUTUBE_SOURCES]) {
-    try {
-      const payload = await fetchText(source.url);
-      if (source.type === "index") {
-        articles.push(...parseWhiskyAdvocateIndex(payload, source));
-      } else if (source.type === "youtube") {
-        articles.push(...parseYouTubeFeed(payload, source));
-      } else {
-        articles.push(...parseRss(payload, source.source));
+export async function collectArticles(network, sourceConcurrency) {
+  const sourceResults = await mapWithConcurrency(
+    [...SOURCES, ...YOUTUBE_SOURCES],
+    sourceConcurrency,
+    async (source) => {
+      try {
+        const payload = await fetchText(source.url, network);
+        if (source.type === "index") {
+          return { articles: parseWhiskyAdvocateIndex(payload, source), failed: false };
+        }
+        if (source.type === "youtube") {
+          return { articles: parseYouTubeFeed(payload, source), failed: false };
+        }
+        return { articles: parseRss(payload, source.source), failed: false };
+      } catch (error) {
+        console.warn(
+          `[news-import] skipped ${source.url}: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+        return { articles: [], failed: true };
       }
-    } catch (error) {
-      console.warn(
-        `[news-import] skipped ${source.url}: ${error instanceof Error ? error.message : "unknown error"}`,
-      );
-    }
+    },
+  );
+  const sourceFailureCount = sourceResults.filter((result) => result.failed).length;
+  if (sourceFailureCount === sourceResults.length) {
+    throw new Error("Unable to fetch any configured news source.");
   }
+
+  const articles = sourceResults.flatMap((result) => result.articles);
 
   const curated = articles
     .filter((article) => (article.type === "video" ? isRelevantVideo(article) : isRelevant(article)))
@@ -532,7 +742,11 @@ async function collectArticles() {
     .slice(0, MAX_VIDEOS_PER_RUN);
   const articlesOnly = curated.filter((article) => article.type !== "video");
 
-  return [...articlesOnly, ...videos];
+  return {
+    articles: [...articlesOnly, ...videos],
+    sourceCount: sourceResults.length,
+    sourceFailureCount,
+  };
 }
 
 function makeDocId(url) {
@@ -552,9 +766,12 @@ function getSupabaseAdmin(env = process.env) {
   });
 }
 
-async function fetchExistingUrls(supabase) {
+export async function fetchExistingUrls(supabase) {
   const { data, error } = await supabase.from("news").select("url").limit(1000);
-  if (error || !data) return new Set();
+  if (error) {
+    throw new Error("Unable to read existing news URLs from Supabase.");
+  }
+  if (!data) return new Set();
   return new Set(data.map((row) => row.url).filter(Boolean));
 }
 
@@ -580,14 +797,29 @@ function isMissingTypeColumn(error) {
 }
 
 function inferImageExtension(contentType = "", imageUrl = "") {
+  if (contentType.includes("avif") || /\.avif($|\?)/i.test(imageUrl)) return "avif";
   if (contentType.includes("png") || /\.png($|\?)/i.test(imageUrl)) return "png";
   if (contentType.includes("webp") || /\.webp($|\?)/i.test(imageUrl)) return "webp";
   if (contentType.includes("gif") || /\.gif($|\?)/i.test(imageUrl)) return "gif";
   return "jpg";
 }
 
-async function uploadNewsImageBuffer(supabase, storagePath, buffer, contentType = "image/jpeg") {
-  const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(storagePath, buffer, {
+function normalizeResponseContentType(value = "") {
+  return value.split(";", 1)[0].trim().toLowerCase();
+}
+
+export function isAllowedRasterContentType(value = "") {
+  return ALLOWED_RASTER_CONTENT_TYPES.has(normalizeResponseContentType(value));
+}
+
+async function uploadNewsImageBuffer(
+  supabase,
+  storageBucket,
+  storagePath,
+  buffer,
+  contentType = "image/jpeg",
+) {
+  const { error } = await supabase.storage.from(storageBucket).upload(storagePath, buffer, {
     contentType,
     upsert: true,
     cacheControl: "31536000",
@@ -597,7 +829,7 @@ async function uploadNewsImageBuffer(supabase, storagePath, buffer, contentType 
     throw new Error(error.message || "thumbnail upload failed");
   }
 
-  const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(storagePath);
+  const { data } = supabase.storage.from(storageBucket).getPublicUrl(storagePath);
   return data?.publicUrl || "";
 }
 
@@ -646,54 +878,55 @@ async function saveArticle(supabase, article) {
   throw new Error(`Unable to save news article: ${article.title} (${message})`);
 }
 
-async function uploadLocalNewsThumbnail(supabase, imageUrl) {
-  if (!imageUrl?.startsWith("/news-thumbs/")) {
-    return imageUrl || FALLBACK_IMAGE;
-  }
-
-  const fileName = path.basename(imageUrl);
-  const filePath = path.join(process.cwd(), "public", "news-thumbs", fileName);
-  const storagePath = `news/imported/${fileName}`;
-
-  try {
-    const publicUrl = await uploadNewsImageBuffer(supabase, storagePath, await fs.readFile(filePath));
-    return publicUrl || imageUrl;
-  } catch (error) {
-    console.warn(
-      `[news-import] thumbnail file unavailable ${fileName}: ${
-        error instanceof Error ? error.message : "unknown error"
-      }`,
-    );
-    return imageUrl;
-  }
-}
-
-async function uploadRemoteNewsThumbnail(supabase, imageUrl, articleUrl) {
+async function uploadRemoteNewsThumbnail(
+  supabase,
+  storageBucket,
+  imageUrl,
+  articleUrl,
+  network,
+) {
   if (!imageUrl || imageUrl.startsWith("/")) {
     return imageUrl || FALLBACK_IMAGE;
   }
 
   try {
-    const response = await fetch(imageUrl, {
+    assertSafeRemoteUrl(imageUrl);
+  } catch (error) {
+    console.warn(
+      `[news-import] unsafe remote thumbnail skipped: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`,
+    );
+    return FALLBACK_IMAGE;
+  }
+
+  try {
+    const result = await fetchRemoteBytes(imageUrl, {
+      fetchImpl: network.fetchImpl,
       headers: {
         "user-agent": "Mozilla/5.0 Caskfolio News Image Cacher",
         accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
       },
+      maxBytes: network.imageResponseLimitBytes,
+      timeoutMs: network.timeoutMs,
     });
-
-    if (!response.ok) {
-      return imageUrl;
-    }
-
-    const contentType = response.headers.get("content-type") || "image/jpeg";
-    if (!contentType.startsWith("image/")) {
+    const contentType = normalizeResponseContentType(result.contentType);
+    if (!isAllowedRasterContentType(contentType)) {
+      console.warn(
+        `[news-import] remote thumbnail MIME skipped: ${contentType || "missing content type"}`,
+      );
       return imageUrl;
     }
 
     const extension = inferImageExtension(contentType, imageUrl);
     const storagePath = `news/imported/${makeDocId(articleUrl || imageUrl)}.${extension}`;
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const publicUrl = await uploadNewsImageBuffer(supabase, storagePath, buffer, contentType);
+    const publicUrl = await uploadNewsImageBuffer(
+      supabase,
+      storageBucket,
+      storagePath,
+      Buffer.from(result.bytes),
+      contentType,
+    );
     return publicUrl || imageUrl;
   } catch (error) {
     console.warn(
@@ -717,13 +950,16 @@ function sortCuratedArticles(articles) {
   });
 }
 
-async function fetchPublishedArticles(supabase) {
+export async function fetchPublishedArticles(supabase) {
   const { data, error } = await supabase
     .from("news")
     .select("*")
     .order("published_at", { ascending: false })
     .limit(160);
-  if (error || !data?.length) {
+  if (error) {
+    throw new Error("Unable to read published news articles from Supabase.");
+  }
+  if (!data?.length) {
     return [];
   }
 
@@ -762,11 +998,72 @@ function limitVideoShare(articles) {
 export async function runNewsImport(options = {}) {
   const {
     env = process.env,
-    writeOutputFile = true,
-    useLocalThumbnails = true,
+    writeOutputFile = false,
+    useLocalThumbnails = false,
+    prepareLocalThumbnail,
+    writeOutput,
+    fetchImpl = globalThis.fetch,
+    fetchTimeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
+    textResponseLimitBytes = DEFAULT_TEXT_RESPONSE_LIMIT_BYTES,
+    imageResponseLimitBytes = DEFAULT_IMAGE_RESPONSE_LIMIT_BYTES,
+    sourceConcurrency = DEFAULT_SOURCE_CONCURRENCY,
+    articleConcurrency = DEFAULT_ARTICLE_CONCURRENCY,
   } = options;
+
+  if (typeof fetchImpl !== "function") {
+    throw new Error("A fetch implementation is required for news import.");
+  }
+  if (useLocalThumbnails && typeof prepareLocalThumbnail !== "function") {
+    throw new Error("Local thumbnail mode requires a CLI thumbnail adapter.");
+  }
+  if (writeOutputFile && typeof writeOutput !== "function") {
+    throw new Error("Writing news.json requires a CLI output adapter.");
+  }
+
+  const toBoundedInteger = (value, fallback, minimum, maximum) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.max(minimum, Math.min(maximum, Math.floor(numeric)));
+  };
+  const network = {
+    fetchImpl,
+    timeoutMs: toBoundedInteger(fetchTimeoutMs, DEFAULT_FETCH_TIMEOUT_MS, 1_000, 30_000),
+    textResponseLimitBytes: toBoundedInteger(
+      textResponseLimitBytes,
+      DEFAULT_TEXT_RESPONSE_LIMIT_BYTES,
+      64 * 1024,
+      5 * 1024 * 1024,
+    ),
+    imageResponseLimitBytes: toBoundedInteger(
+      imageResponseLimitBytes,
+      DEFAULT_IMAGE_RESPONSE_LIMIT_BYTES,
+      64 * 1024,
+      10 * 1024 * 1024,
+    ),
+  };
+  const boundedSourceConcurrency = toBoundedInteger(
+    sourceConcurrency,
+    DEFAULT_SOURCE_CONCURRENCY,
+    1,
+    6,
+  );
+  const boundedArticleConcurrency = toBoundedInteger(
+    articleConcurrency,
+    DEFAULT_ARTICLE_CONCURRENCY,
+    1,
+    6,
+  );
+  const storageBucket =
+    env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET ||
+    process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET ||
+    DEFAULT_STORAGE_BUCKET;
+  const collectedResult = await collectArticles(network, boundedSourceConcurrency);
   const collected = limitVideoShare(
-    [...new Map((await collectArticles()).map((item) => [item.url, item])).values()],
+    [
+      ...new Map(
+        collectedResult.articles.map((item) => [item.url, item]),
+      ).values(),
+    ],
   );
 
   const supabase = getSupabaseAdmin(env);
@@ -774,18 +1071,35 @@ export async function runNewsImport(options = {}) {
   const newArticles = collected.filter((item) => !existingUrls.has(item.url)).slice(0, 3);
   const curatedArticles = collected.slice(0, 18);
 
-  for (const article of curatedArticles) {
-    const extracted = await extractArticleDetails(article);
+  await mapWithConcurrency(curatedArticles, boundedArticleConcurrency, async (article) => {
+    const extracted = await extractArticleDetails(article, network);
     article.summary = extracted.summary || article.summary;
     const sourceImageUrl = extracted.imageUrl || article.imageUrl || FALLBACK_IMAGE;
     if (useLocalThumbnails) {
-      article.imageUrl = await createNewsThumbnail(sourceImageUrl);
-      article.imageUrl = await uploadLocalNewsThumbnail(supabase, article.imageUrl);
+      article.imageUrl = await prepareLocalThumbnail({
+        article,
+        fallbackImage: FALLBACK_IMAGE,
+        sourceImageUrl,
+        uploadBuffer: (storagePath, buffer, contentType = "image/jpeg") =>
+          uploadNewsImageBuffer(
+            supabase,
+            storageBucket,
+            storagePath,
+            buffer,
+            contentType,
+          ),
+      });
     } else {
-      article.imageUrl = await uploadRemoteNewsThumbnail(supabase, sourceImageUrl, article.url);
+      article.imageUrl = await uploadRemoteNewsThumbnail(
+        supabase,
+        storageBucket,
+        sourceImageUrl,
+        article.url,
+        network,
+      );
     }
     await saveArticle(supabase, article);
-  }
+  });
 
   const publishedArticles = await fetchPublishedArticles(supabase);
   const fallbackArticles = limitVideoShare(collected).slice(0, 18);
@@ -795,33 +1109,27 @@ export async function runNewsImport(options = {}) {
   }));
 
   if (writeOutputFile) {
-    await fs.mkdir(path.dirname(OUTPUT_PATH), { recursive: true });
-    await fs.writeFile(OUTPUT_PATH, JSON.stringify(outputArticles, null, 2));
+    await writeOutput(outputArticles);
   }
 
   const summary = {
     saved: newArticles.length,
     count: outputArticles.length,
     latestTitle: outputArticles[0]?.title ?? "",
+    sourceCount: collectedResult.sourceCount,
+    sourceFailureCount: collectedResult.sourceFailureCount,
+    warning:
+      collectedResult.sourceFailureCount > 0
+        ? `${collectedResult.sourceFailureCount} of ${collectedResult.sourceCount} news sources failed.`
+        : "",
     wroteOutputFile: writeOutputFile,
   };
 
-  if (writeOutputFile) {
-    console.log(
-      `[news-import] saved ${summary.saved} new article(s) and refreshed ${OUTPUT_PATH}`,
-    );
-  } else {
+  if (!writeOutputFile) {
     console.log(
       `[news-import] saved ${summary.saved} new article(s) and refreshed Supabase news rows`,
     );
   }
 
   return summary;
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runNewsImport().catch((error) => {
-    console.error("[news-import] failed:", error);
-    process.exitCode = 1;
-  });
 }
